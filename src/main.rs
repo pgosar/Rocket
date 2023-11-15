@@ -1,5 +1,5 @@
 mod seq;
 
 fn main() {
-    println!("Hello, world!");
+    seq::run();
 }

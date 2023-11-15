@@ -1,3 +1,5 @@
 mod client;
-mod seq;
+pub mod seq;
 mod server;
+
+pub use seq::*;
