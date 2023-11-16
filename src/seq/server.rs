@@ -1,28 +1,59 @@
 use socket2::{Domain, Socket, Type};
-use std::io::{prelude::*, BufReader};
-use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
+use std::io::prelude::*;
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 
 struct Server {
     ip: String,
-    port: u32,
+    port: u16,
     key: String,
 }
 
-pub fn run_server() {
-    let listener: TcpListener = TcpListener::bind("127.0.0.1:8080").unwrap(); //socket.into();
-    println!("test");
+pub fn run_server() -> std::io::Result<()> {
+    let server = Server {
+        ip: String::from("::1"),
+        port: 8080,
+        key: "1234567890".to_string(),
+    };
+    let sock = Socket::new(Domain::IPV6, Type::STREAM, None).unwrap();
+    sock.set_only_v6(false)?;
+    let address: SocketAddr = format!("[{}]:{}", server.ip, server.port).parse().unwrap();
+    sock.bind(&address.into())?;
+    sock.listen(128)?;
+    let listener: TcpListener = sock.into();
     for stream in listener.incoming() {
-        let stream = stream.unwrap();
-        handle_connection(stream);
+        match stream {
+            Ok(stream) => {
+                println!("New connection: {}", stream.peer_addr().unwrap());
+                handle_client(stream);
+            }
+            Err(e) => {
+                println!("Error: {}", e);
+            }
+        }
     }
+    Ok(())
 }
 
-fn handle_connection(mut stream: TcpStream) {
-    let reader = BufReader::new(&mut stream);
-    let http_request: Vec<_> = reader
-        .lines()
-        .map(|result| result.unwrap())
-        .take_while(|line| !line.is_empty())
-        .collect();
-    println!("Request: {:#?}", http_request);
+pub fn handle_client(mut stream: TcpStream) {
+    println!("handling client");
+    let mut buf = [0; 1024];
+    while let Ok(size) = stream.read(&mut buf) {
+        if size == 0 {
+            println!("size is 0");
+            break;
+        }
+        match stream.write_all(&buf[0..size]) {
+            Ok(_) => {
+                println!("Server Sent: {}", String::from_utf8_lossy(&buf[..size]));
+            }
+            Err(_) => {
+                println!(
+                    "An error occurred while writing, terminating connection with {}",
+                    stream.peer_addr().unwrap()
+                );
+                stream.shutdown(Shutdown::Both).unwrap();
+                break;
+            }
+        }
+    }
 }
