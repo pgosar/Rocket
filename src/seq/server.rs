@@ -42,6 +42,7 @@ pub fn handle_client(mut stream: TcpStream) {
             println!("size is 0");
             break;
         }
+        println!("Server Received: {}", String::from_utf8_lossy(&buf[..size]));
         match stream.write_all(&buf[0..size]) {
             Ok(_) => {
                 println!("Server Sent: {}", String::from_utf8_lossy(&buf[..size]));
