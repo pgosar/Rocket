@@ -2,28 +2,34 @@ use socket2::{Domain, Socket, Type};
 use std::io::prelude::*;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 
+const WEBSOCKET_PREFIX: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
 pub struct Server {
     ip: String,
     port: u16,
     key: String,
+    listener: TcpListener,
 }
+
 
 impl Server {
     pub fn new(ip: String, port: u16, key: String) -> Server {
+        let sock = Socket::new(Domain::IPV6, Type::STREAM, None).unwrap();
+        sock.set_only_v6(false).unwrap();
+        let address: SocketAddr = format!("[{}]:{}", ip, port).parse().unwrap();
+        sock.bind(&address.into()).unwrap();
+        sock.listen(128).unwrap();
+        let listener: TcpListener = sock.into();
         Server {
-            ip: ip,
-            port: port,
-            key: key
+            ip,
+            port,
+            key,
+            listener,
         }
     }
+
     pub fn run_server(&self) -> std::io::Result<()> {
-        let sock = Socket::new(Domain::IPV6, Type::STREAM, None).unwrap();
-        sock.set_only_v6(false)?;
-        let address: SocketAddr = format!("[{}]:{}", self.ip, self.port).parse().unwrap();
-        sock.bind(&address.into())?;
-        sock.listen(128)?;
-        let listener: TcpListener = sock.into();
-        for stream in listener.incoming() {
+        for stream in self.listener.incoming() {
             match stream {
                 Ok(stream) => {
                     println!("New connection: {}", stream.peer_addr().unwrap());
@@ -40,7 +46,12 @@ impl Server {
     pub fn handle_client(&self, mut stream: TcpStream) {
         println!("handling client");
         let mut buf = [0; 1024];
-        stream.set_read_timeout(None).expect("set_read_timeout call failed");
+        //stream.set_read_timeout(None).expect("set_read_timeout call failed");
+
+        //let size = stream.read(&mut buf).unwrap();
+        //let request = String::from_utf8_lossy(&buf[..size]);
+        //let lines: std::vec::Vec<&str> = request.split('\n').collect();
+
 
         while let Ok(size) = stream.read(&mut buf) {
             if size == 0 {
