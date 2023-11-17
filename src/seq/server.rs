@@ -36,7 +36,7 @@ impl Server {
         }
         Ok(())
     }
-    
+
     pub fn handle_client(&self, mut stream: TcpStream) {
         println!("handling client");
         let mut buf = [0; 1024];
