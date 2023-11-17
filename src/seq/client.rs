@@ -1,11 +1,20 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::str::from_utf8;
+use base64::{Engine as _, engine::{self, general_purpose}, alphabet};
+
 
 pub struct Client {
     server_uri: String,
     server_port: u16,
     server_path: String,
+}
+
+fn generate_key() -> String {
+    // Random 16 byte value base-64 encoded
+    let mut rng = rand::thread_rng();
+    let bytes: String = (0..16).map(|_| rand::random::<u8>() as char).collect();
+    general_purpose::STANDARD.encode(&bytes)
 }
 
 impl Client {
@@ -27,23 +36,25 @@ impl Client {
         }
     }
 
-    /*pub fn handshake_http(stream: &mut TcpStream) -> &String {
+    pub fn handshake_http(&self, stream: &mut TcpStream) -> String {
         //dGhlIHNhbXBsZSBub25jZQ==
-        //let my_addr: SocketAddr = stream.local_addr().unwrap();
-
-        return format("GET {} HTTP/1.1\n\
-            Host: {}\n\
+        let my_addr: std::net::SocketAddr = stream.local_addr().unwrap();
+        let my_key: String = generate_key();
+        return format!("GET {} HTTP/1.1\n\
+            Host: {}:{}\n\
             Upgrade: websocket\n\
             Connection: Upgrade\n\
             Sec-WebSocket-Key: {}\n\
             Origin: {}:{}\n\
             Sec-WebSocket-Version: 13", 
-
+            self.server_path,
             self.server_uri, 
-
-
+            self.server_port,
+            &my_key,
+            my_addr.ip().to_string(),
+            my_addr.port().to_string(),
         );
-    }*/
+    }
 
     pub fn run_client(&self, msg: String, repeats: i32) -> std::io::Result<()> {
         let address: String = format!("{}:{}", self.server_uri, self.server_port);
@@ -51,8 +62,24 @@ impl Client {
         match TcpStream::connect(address) {
             Ok(mut stream) => {
                 println!("Successfully connected to server in port {}", self.server_port);
-                let byte_msg = msg.as_bytes();
+
+                let handshake = self.handshake_http(&mut stream);
+                stream.write(handshake.as_bytes())?;
                 let mut data = [0 as u8; 1024];
+
+                
+                match stream.read(&mut data) {
+                    Ok(_) => {
+                        println!("{}", from_utf8(&data).unwrap());
+                    }
+                    Err(e) => {
+                        println!("Failed to receive data: {}", e);
+                    }
+                }
+
+                let byte_msg = msg.as_bytes();
+
+
                 for _ in 0..repeats {
                     stream.write(byte_msg)?;
                     println!("Client Sent: {}", msg);
@@ -74,5 +101,5 @@ impl Client {
             }
         }
         Ok(())
-    }
+    }    
 }
