@@ -2,6 +2,24 @@ use crate::utils;
 use std::collections::VecDeque;
 use std::time::SystemTime;
 
+pub enum ErrorLevel {
+    INFO,
+    WARNING,
+    ERROR,
+}
+
+pub struct Message {
+    msg: String,
+    error_level: ErrorLevel,
+    timestamp: f64,
+}
+
+impl Message {
+    pub fn get_timestamp(&self) -> f64 {
+        self.timestamp
+    }
+}
+
 pub struct Logger {
     entries: VecDeque<utils::Message>,
     max_time: f64,
