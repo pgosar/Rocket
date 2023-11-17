@@ -3,6 +3,6 @@ mod seq;
 mod utils;
 
 fn main() {
-    set_var("RUST_BACKTRACE", "1");
-    seq::run();
+  set_var("RUST_BACKTRACE", "1");
+  seq::run();
 }
