@@ -1,12 +1,11 @@
-use base64::{
-  alphabet,
-  engine::{self, general_purpose},
-  Engine as _,
-};
+use crate::utils::logging::*;
+use base64::engine::general_purpose;
+use base64::Engine;
 use sha1::Digest;
 use socket2::{Domain, Socket, Type};
 use std::io::prelude::*;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::vec;
 
 const WEBSOCKET_PREFIX: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -15,6 +14,7 @@ pub struct Server {
   port: u16,
   key: String,
   listener: TcpListener,
+  server_log: Logger,
 }
 impl Server {
   pub fn new(ip: String, port: u16, key: String) -> Server {
@@ -29,15 +29,18 @@ impl Server {
       port,
       key,
       listener,
+      server_log: Logger::new(),
     }
   }
 
-  pub fn run_server(&self) -> std::io::Result<()> {
-    for stream in self.listener.incoming() {
+  pub fn run_server(&mut self) -> std::io::Result<()> {
+    for stream in self.listener.try_clone()?.incoming() {
       match stream {
         Ok(stream) => {
           println!("New connection: {}", stream.peer_addr().unwrap());
-          self.handle_client(stream);
+          {
+            self.handle_client(stream);
+          }
         }
         Err(e) => {
           println!("Error: {}", e);
@@ -75,7 +78,7 @@ impl Server {
             Sec-WebSocket-Accept: {}",
       my_key
     );
-    stream.write(response.as_bytes());
+    stream.write(response.as_bytes()).unwrap();
     /*
     HTTP/1.1 101 Switching Protocols
     Upgrade: websocket
@@ -85,38 +88,51 @@ impl Server {
     true
   }
 
-  pub fn handle_client(&self, mut stream: TcpStream) {
-    println!("handling client");
-    let mut buf = [0; 1024];
-    //stream.set_read_timeout(None).expect("set_read_timeout call failed");
+  fn read_message(&mut self, buf: &mut Vec<u8>, stream: &mut TcpStream) -> bool {
+    let size = stream.read(buf).unwrap();
+    if size == 0 {
+      println!("size is 0");
+      return false;
+    }
+    let msg: String = format!("Server Read: {}", String::from_utf8_lossy(&buf[..]));
+    let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
+    self.server_log.log(m);
+    true
+  }
 
+  fn write_message(&mut self, buf: &mut Vec<u8>, stream: &mut TcpStream) -> bool {
+    match stream.write(&buf) {
+      Ok(_) => {
+        let msg: String = format!("Server Read: {}", String::from_utf8_lossy(&buf[..]));
+        let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
+        self.server_log.log(m);
+        true
+      }
+      Err(_) => {
+        println!(
+          "An error occurred while writing, terminating connection with {}",
+          stream.peer_addr().unwrap()
+        );
+        stream.shutdown(Shutdown::Both).unwrap();
+        false
+      }
+    }
+  }
+
+  pub fn handle_client(&mut self, mut stream: TcpStream) {
+    println!("handling client");
+    let mut buf: Vec<u8> = vec![0; 1024];
     let handshake_success: bool = self.verify_client_handshake(&mut stream);
     if handshake_success {
-      while let Ok(size) = stream.read(&mut buf) {
-        if size == 0 {
-          println!("size is 0");
+      while self.read_message(&mut buf, &mut stream) {
+        if !self.write_message(&mut buf, &mut stream) {
           break;
-        }
-        println!("Server Received: {}", String::from_utf8_lossy(&buf[..size]));
-        match stream.write(&buf) {
-          Ok(_) => {
-            println!("Server Sent: {}", String::from_utf8_lossy(&buf[..size]));
-          }
-          Err(_) => {
-            println!(
-              "An error occurred while writing, terminating connection with {}",
-              stream.peer_addr().unwrap()
-            );
-            stream.shutdown(Shutdown::Both).unwrap();
-            break;
-          }
         }
       }
     } else {
       println!("Invalid client handshake");
     }
-
     println!("client all done");
+    self.server_log.print_log();
   }
-  println!("client all done");
 }

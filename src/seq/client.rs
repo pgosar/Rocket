@@ -1,8 +1,4 @@
-use base64::{
-  alphabet,
-  engine::{self, general_purpose},
-  Engine as _,
-};
+use base64::{engine::general_purpose, Engine};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::str::from_utf8;
@@ -15,7 +11,6 @@ pub struct Client {
 
 fn generate_key() -> String {
   // Random 16 byte value base-64 encoded
-  let mut rng = rand::thread_rng();
   let bytes: String = (0..16).map(|_| rand::random::<u8>() as char).collect();
   general_purpose::STANDARD.encode(&bytes)
 }
@@ -60,6 +55,31 @@ impl Client {
     );
   }
 
+  fn read_message(&self, buf: &mut Vec<u8>, stream: &mut TcpStream) {
+    match stream.read(buf) {
+      Ok(_) => {
+        println!("Client Received: {}", from_utf8(&buf).unwrap());
+      }
+      Err(e) => {
+        println!("Failed to receive data: {}", e);
+      }
+    }
+  }
+
+  fn write_message(&self, buf: &mut Vec<u8>, stream: &mut TcpStream, msg: String) {
+    let byte_msg = msg.as_bytes();
+    stream.write(byte_msg).unwrap();
+    println!("Client Sent: {}", msg);
+    match stream.read(buf) {
+      Ok(_) => {
+        println!("Client Received: {}", from_utf8(&buf).unwrap());
+      }
+      Err(e) => {
+        println!("Failed to receive data: {}", e);
+      }
+    }
+  }
+
   pub fn run_client(&self, msg: String, repeats: i32) -> std::io::Result<()> {
     let address: String = format!("{}:{}", self.server_uri, self.server_port);
     println!("{}", address);
@@ -72,30 +92,10 @@ impl Client {
 
         let handshake = self.handshake_http(&mut stream);
         stream.write(handshake.as_bytes())?;
-        let mut data = [0 as u8; 1024];
-
-        match stream.read(&mut data) {
-          Ok(_) => {
-            println!("{}", from_utf8(&data).unwrap());
-          }
-          Err(e) => {
-            println!("Failed to receive data: {}", e);
-          }
-        }
-
-        let byte_msg = msg.as_bytes();
-
+        let mut buf: Vec<u8> = vec![0; 1024];
+        self.read_message(&mut buf, &mut stream);
         for _ in 0..repeats {
-          stream.write(byte_msg)?;
-          println!("Client Sent: {}", msg);
-          match stream.read(&mut data) {
-            Ok(_) => {
-              println!("Client Received: {}", from_utf8(&data).unwrap());
-            }
-            Err(e) => {
-              println!("Failed to receive data: {}", e);
-            }
-          }
+          self.write_message(&mut buf, &mut stream, msg.clone());
           std::thread::sleep(std::time::Duration::from_secs(2));
         }
         // the size becomes 0 in server.rs when this call finishes because
