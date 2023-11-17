@@ -97,8 +97,10 @@ impl Client {
                 // the connection closes when the listener scope is gone
             }
             Err(e) => {
-                println!("Failed to connect: {}", e);
+              println!("Failed to receive data: {}", e);
             }
+          }
+          std::thread::sleep(std::time::Duration::from_secs(2));
         }
         Ok(())
     }    

@@ -40,7 +40,10 @@ impl Server {
                 }
             }
         }
-        Ok(())
+        Err(e) => {
+          println!("Error: {}", e);
+        }
+      }
     }
 
     /*fn verify_structure(std::vec::Vec<&str>& lines) -> bool {
@@ -114,4 +117,6 @@ impl Server {
         
         println!("client all done");
     }
+    println!("client all done");
+  }
 }
