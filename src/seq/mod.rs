@@ -1,4 +1,5 @@
-mod client;
+mod clientsocket;
+mod testclient;
 pub mod seq;
 mod server;
 

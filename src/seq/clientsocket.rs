@@ -3,10 +3,12 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::str::from_utf8;
 
-pub struct Client {
+pub struct ClientSocket {
   server_uri: String,
   server_port: u16,
   server_path: String,
+  stream: Option<TcpStream>,
+  buf: Option<Vec<u8>>,
 }
 
 fn generate_key() -> String {
@@ -15,8 +17,8 @@ fn generate_key() -> String {
   general_purpose::STANDARD.encode(&bytes)
 }
 
-impl Client {
-  pub fn new(uri: String) -> Client {
+impl ClientSocket {
+  pub fn new(uri: String) -> ClientSocket {
     let split_uri: std::vec::Vec<&str> = uri.split(':').collect();
     let port_path = String::from(split_uri[1]);
     let port_path_vec: std::vec::Vec<&str> = port_path.split('/').collect();
@@ -27,18 +29,22 @@ impl Client {
     let server_uri = String::from(split_uri[0]);
     let server_port = port_path_vec[0].parse::<u16>().unwrap();
     println!("{} {} {}", server_uri, server_port, path);
-    Client {
+    ClientSocket {
       server_uri,
       server_port,
       server_path: path,
+      stream: None,
+      buf: None,
     }
   }
 
-  pub fn handshake_http(&self, stream: &mut TcpStream) -> String {
+  fn handshake_http(&mut self) -> bool {
     //dGhlIHNhbXBsZSBub25jZQ==
+    let mut stream = self.stream.as_ref().expect("Stream not instantiated")
+                 .try_clone().expect("clone failed");
     let my_addr: std::net::SocketAddr = stream.local_addr().unwrap();
     let my_key: String = generate_key();
-    return format!(
+    let handshake = format!(
       "GET {} HTTP/1.1\n\
             Host: {}:{}\n\
             Upgrade: websocket\n\
@@ -53,10 +59,16 @@ impl Client {
       my_addr.ip().to_string(),
       my_addr.port().to_string(),
     );
+    stream.write(handshake.as_bytes());
+    self.read_message();
+    true
   }
 
-  fn read_message(&self, buf: &mut Vec<u8>, stream: &mut TcpStream) {
-    match stream.read(buf) {
+  pub fn read_message(&mut self) {
+    let mut stream = self.stream.as_ref().expect("Stream not instantiated")
+                 .try_clone().expect("clone failed");
+    let mut buf = self.buf.as_mut().expect("Buf not instantiated");
+    match stream.read(&mut buf) {
       Ok(_) => {
         println!("Client Received: {}", from_utf8(&buf).unwrap());
       }
@@ -66,46 +78,30 @@ impl Client {
     }
   }
 
-  fn write_message(&self, buf: &mut Vec<u8>, stream: &mut TcpStream, msg: String) {
+  pub fn write_message(&self, msg: String) {
+    let mut stream = self.stream.as_ref().expect("Stream not instantiated")
+                 .try_clone().expect("clone failed");
     let byte_msg = msg.as_bytes();
     stream.write(byte_msg).unwrap();
     println!("Client Sent: {}", msg);
-    match stream.read(buf) {
-      Ok(_) => {
-        println!("Client Received: {}", from_utf8(&buf).unwrap());
-      }
-      Err(e) => {
-        println!("Failed to receive data: {}", e);
-      }
-    }
   }
 
-  pub fn run_client(&self, msg: String, repeats: i32) -> std::io::Result<()> {
+  pub fn connect(&mut self) {
     let address: String = format!("{}:{}", self.server_uri, self.server_port);
     println!("{}", address);
     match TcpStream::connect(address) {
-      Ok(mut stream) => {
+      Ok(stream) => {
         println!(
           "Successfully connected to server in port {}",
           self.server_port
         );
-
-        let handshake = self.handshake_http(&mut stream);
-        stream.write(handshake.as_bytes())?;
-        let mut buf: Vec<u8> = vec![0; 1024];
-        self.read_message(&mut buf, &mut stream);
-        for _ in 0..repeats {
-          self.write_message(&mut buf, &mut stream, msg.clone());
-          std::thread::sleep(std::time::Duration::from_secs(2));
-        }
-        // the size becomes 0 in server.rs when this call finishes because
-        // the connection closes when the listener scope is gone
+        self.stream = Some(stream);
+        self.buf = Some(vec![0; 1024]);
+        self.handshake_http();
       }
       Err(e) => {
         println!("Failed to receive data: {}", e);
       }
     }
-    std::thread::sleep(std::time::Duration::from_secs(2));
-    Ok(())
   }
 }
