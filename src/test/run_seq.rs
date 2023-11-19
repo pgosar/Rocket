@@ -1,5 +1,5 @@
-use crate::seq::testclient;
-use crate::seq::server;
+use crate::test::testclient;
+use crate::server::server;
 use std::thread;
 
 pub fn run() {

@@ -1,6 +1,4 @@
-use crate::seq::clientsocket;
-use clientsocket::ClientSocket;
-
+use crate::client::clientsocket::ClientSocket;
 pub struct TestClient {
   socket: ClientSocket,
 } 
