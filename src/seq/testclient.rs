@@ -20,6 +20,7 @@ impl TestClient {
       std::thread::sleep(std::time::Duration::from_secs(2));
     }
     std::thread::sleep(std::time::Duration::from_secs(2));
+    self.socket.disconnect();
     Ok(())
   }
 }

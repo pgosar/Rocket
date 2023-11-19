@@ -79,12 +79,6 @@ impl Server {
       my_key
     );
     stream.write(response.as_bytes()).unwrap();
-    /*
-    HTTP/1.1 101 Switching Protocols
-    Upgrade: websocket
-    Connection: Upgrade
-    Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
-    */
     true
   }
 
