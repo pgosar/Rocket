@@ -79,12 +79,6 @@ impl Server {
       my_key
     );
     stream.write(response.as_bytes()).unwrap();
-    /*
-    HTTP/1.1 101 Switching Protocols
-    Upgrade: websocket
-    Connection: Upgrade
-    Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
-    */
     true
   }
 
@@ -103,7 +97,7 @@ impl Server {
   fn write_message(&mut self, buf: &mut Vec<u8>, stream: &mut TcpStream) -> bool {
     match stream.write(&buf) {
       Ok(_) => {
-        let msg: String = format!("Server Read: {}", String::from_utf8_lossy(&buf[..]));
+        let msg: String = format!("Server Write: {}", String::from_utf8_lossy(&buf[..]));
         let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
         self.server_log.log(m);
         true

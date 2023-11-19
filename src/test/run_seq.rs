@@ -1,5 +1,5 @@
-use crate::seq::client;
-use crate::seq::server;
+use crate::test::testclient;
+use crate::server::server;
 use std::thread;
 
 pub fn run() {
@@ -9,7 +9,7 @@ pub fn run() {
   });
   thread::sleep(std::time::Duration::from_secs(1));
 
-  let my_client = client::Client::new(String::from("localhost:8080"));
+  let mut my_client = testclient::TestClient::new(String::from("localhost:8080"));
   let client_thread = thread::spawn(move || {
     my_client
       .run_client(String::from("Hello World"), 2)
