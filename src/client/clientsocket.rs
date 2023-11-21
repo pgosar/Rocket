@@ -3,13 +3,17 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::str::from_utf8;
 use std::thread;
+use std::sync::mpsc::{self, TryRecvError};
+use std::time::Duration;
+
 
 pub struct ClientSocket {
   server_uri: String,
   server_port: u16,
   server_path: String,
   stream: Option<TcpStream>,
-  reader_thread: Option<thread::JoinHandle<()>>
+  reader_thread: Option<thread::JoinHandle<()>>,
+  sender: Option<mpsc::Sender<()>>,
 }
 
 fn generate_key() -> String {
@@ -29,13 +33,13 @@ impl ClientSocket {
     }
     let server_uri = String::from(split_uri[0]);
     let server_port = port_path_vec[0].parse::<u16>().unwrap();
-    println!("{} {} {}", server_uri, server_port, path);
     ClientSocket {
       server_uri,
       server_port,
       server_path: path,
       stream: None,
       reader_thread: None,
+      sender: None,
     }
   }
 
@@ -74,23 +78,26 @@ impl ClientSocket {
     true
   }
 
-  fn reader_loop(mut stream: TcpStream) {
+  fn reader_loop(mut stream: TcpStream, receiver: mpsc::Receiver<()>) {
     let mut buf = vec![0; 1024];
+    stream.set_read_timeout(Some(Duration::new(1, 0))).unwrap();
     loop {
-      match stream.read(&mut buf) {
-        Ok(_) => {
-          println!("Client Received: {}", from_utf8(&buf).unwrap());
-        }
-        Err(e) => {
-          println!("Failed to receive data: {}", e);
+      match receiver.try_recv() {
+        Ok(_) | Err(TryRecvError::Disconnected) => {
           break;
+        }
+        Err(TryRecvError::Empty) => {
+          match stream.read(&mut buf) {
+            Ok(_) => {
+              println!("Client Received: {}", from_utf8(&buf).unwrap());
+            }
+            Err(e) => {
+              //println!("Failed to receive data: {}", e);
+            }
+          }
         }
       }
     }
-
-    /*while let Ok(_) = stream.read(&mut buf) {
-      println!("Client Received: {}", from_utf8(&buf).unwrap());
-    } */
   }
 
   pub fn write_message(&self, msg: String) {
@@ -112,8 +119,10 @@ impl ClientSocket {
         );
         self.stream = Some(stream.try_clone().unwrap());
         if self.handshake_http() {
+          let (tx, rx) = mpsc::channel();
+          self.sender = Some(tx);
           self.reader_thread = Some(thread::spawn(move || {
-            let _ = Self::reader_loop(stream);
+            let _ = Self::reader_loop(stream, rx);
           }));
         }
       }
@@ -124,6 +133,11 @@ impl ClientSocket {
   }
 
   pub fn disconnect(&mut self) {
-    self.reader_thread.take().expect("Thread not launched").join().expect("Join failed");
+    if let Some(tx) = self.sender.take() {
+      tx.send(()).unwrap();
+      if let Some(jh) = self.reader_thread.take() {
+          jh.join().unwrap();
+      }
+    } 
   }
 }

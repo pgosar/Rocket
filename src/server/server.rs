@@ -60,7 +60,7 @@ impl Server {
       let first_line: Vec<&str> = lines[0].split(" ").collect();
   }*/
 
-  fn verify_client_handshake(&self, stream: &mut TcpStream) -> bool {
+  fn verify_client_handshake(stream: &mut TcpStream) -> bool {
     let mut buf = [0; 1024];
     let size = stream.read(&mut buf).unwrap();
     let request = String::from_utf8_lossy(&buf[..size]);
@@ -116,7 +116,7 @@ impl Server {
   pub fn handle_client(&mut self, mut stream: TcpStream) {
     println!("handling client");
     let mut buf: Vec<u8> = vec![0; 1024];
-    let handshake_success: bool = self.verify_client_handshake(&mut stream);
+    let handshake_success: bool = Self::verify_client_handshake(&mut stream);
     if handshake_success {
       while self.read_message(&mut buf, &mut stream) {
         if !self.write_message(&mut buf, &mut stream) {

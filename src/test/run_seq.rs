@@ -10,11 +10,18 @@ pub fn run() {
   thread::sleep(std::time::Duration::from_secs(1));
 
   let mut my_client = testclient::TestClient::new(String::from("localhost:8080"));
+  let mut my_other_client = testclient::TestClient::new(String::from("localhost:8080"));
   let client_thread = thread::spawn(move || {
     my_client
       .run_client(String::from("Hello World"), 2)
       .expect("Error running client");
   });
+  let other_client_thread = thread::spawn(move || {
+    my_other_client
+      .run_client(String::from("Hello World"), 2)
+      .expect("Error running client");
+  });
   client_thread.join().expect("Error joining client thread");
+  other_client_thread.join().expect("Error joining client thread");
   server_thread.join().expect("Error joining server thread");
 }
