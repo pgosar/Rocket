@@ -1,6 +1,6 @@
+use async_std::io::{ReadExt, WriteExt};
+use async_std::net::TcpStream;
 use base64::{engine::general_purpose, Engine};
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::str::from_utf8;
 use std::thread;
 
@@ -9,7 +9,7 @@ pub struct ClientSocket {
   server_port: u16,
   server_path: String,
   stream: Option<TcpStream>,
-  reader_thread: Option<thread::JoinHandle<()>>
+  reader_thread: Option<thread::JoinHandle<()>>,
 }
 
 fn generate_key() -> String {
@@ -39,10 +39,9 @@ impl ClientSocket {
     }
   }
 
-  fn handshake_http(&mut self) -> bool {
+  async fn handshake_http(&mut self) -> bool {
     //dGhlIHNhbXBsZSBub25jZQ==
-    let mut stream = self.stream.as_ref().expect("Stream not instantiated")
-                 .try_clone().expect("clone failed");
+    let mut stream = self.stream.as_ref().expect("Stream not instantiated");
     let mut buf = vec![0; 1024];
     let my_addr: std::net::SocketAddr = stream.local_addr().unwrap();
     let my_key: String = generate_key();
@@ -61,8 +60,11 @@ impl ClientSocket {
       my_addr.ip().to_string(),
       my_addr.port().to_string(),
     );
-    stream.write(handshake.as_bytes()).expect("write failed");
-    match stream.read(&mut buf) {
+    stream
+      .write(handshake.as_bytes())
+      .await
+      .expect("Write failed");
+    match stream.read(&mut buf).await {
       Ok(_) => {
         println!("Client Received: {}", from_utf8(&buf).unwrap());
       }
@@ -74,10 +76,10 @@ impl ClientSocket {
     true
   }
 
-  fn reader_loop(mut stream: TcpStream) {
+  async fn reader_loop(mut stream: TcpStream) {
     let mut buf = vec![0; 1024];
     loop {
-      match stream.read(&mut buf) {
+      match stream.read(&mut buf).await {
         Ok(_) => {
           println!("Client Received: {}", from_utf8(&buf).unwrap());
         }
@@ -93,25 +95,24 @@ impl ClientSocket {
     } */
   }
 
-  pub fn write_message(&self, msg: String) {
-    let mut stream = self.stream.as_ref().expect("Stream not instantiated")
-                 .try_clone().expect("clone failed");
+  pub async fn write_message(&self, msg: String) {
+    let mut stream = self.stream.as_ref().expect("Stream not instantiated");
     let byte_msg = msg.as_bytes();
-    stream.write(byte_msg).unwrap();
+    stream.write(byte_msg).await.unwrap();
     println!("Client Sent: {}", msg);
   }
 
-  pub fn connect(&mut self) {
+  pub async fn connect(&mut self) {
     let address: String = format!("{}:{}", self.server_uri, self.server_port);
     println!("{}", address);
-    match TcpStream::connect(address) {
+    match TcpStream::connect(address).await {
       Ok(stream) => {
         println!(
           "Successfully connected to server in port {}",
           self.server_port
         );
-        self.stream = Some(stream.try_clone().unwrap());
-        if self.handshake_http() {
+        self.stream = Some(stream.clone());
+        if self.handshake_http().await {
           self.reader_thread = Some(thread::spawn(move || {
             let _ = Self::reader_loop(stream);
           }));
@@ -124,6 +125,11 @@ impl ClientSocket {
   }
 
   pub fn disconnect(&mut self) {
-    self.reader_thread.take().expect("Thread not launched").join().expect("Join failed");
+    self
+      .reader_thread
+      .take()
+      .expect("Thread not launched")
+      .join()
+      .expect("Join failed");
   }
 }

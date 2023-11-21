@@ -1,11 +1,12 @@
 use std::env::set_var;
+mod client;
+mod server;
 mod test;
 mod utils;
-mod server;
-mod client;
+use pollster::block_on;
 use test::run_seq::run;
 
 fn main() {
   set_var("RUST_BACKTRACE", "1");
-  run();
+  block_on(run());
 }
