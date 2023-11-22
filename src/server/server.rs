@@ -1,14 +1,11 @@
 use crate::utils::logging::*;
 use crate::utils::utils::*;
-use base64::engine::general_purpose;
-use base64::Engine;
-use sha1::Digest;
 use socket2::{Domain, Socket, Type};
 use std::io::prelude::*;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::vec;
+use std::collections::HashMap;
 
-const WEBSOCKET_PREFIX: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 pub struct Server {
   ip: String,
@@ -66,8 +63,33 @@ impl Server {
     let size = stream.read(&mut buf).unwrap();
     let request = String::from_utf8_lossy(&buf[..size]);
     let lines: std::vec::Vec<&str> = request.split('\n').collect();
-    let key: std::vec::Vec<&str> = lines[4].split(" ").collect();
-    let my_key = sec_websocket_key(key[1].to_owned());
+    let first_line: vec::Vec<&str> = lines[0].split(' ').collect();
+    if first_line.len() != 3 || first_line[0] != "GET" || 
+       !first_line[1].starts_with('/') || first_line[2] != "HTTP/1.1" {
+        println!("early on failure {} {} {}", first_line[0], first_line[1], first_line[2]);
+      return false;
+    }
+
+    let mut m: HashMap<String, String> = HashMap::new();
+    for line in lines[1..].iter() {
+      let split_line: Vec<&str> = (*line).split(": ").collect();
+      if split_line.len() != 2 {
+        return false;
+      }
+      m.insert(String::from(split_line[0]), String::from(split_line[1]));
+    }
+    let host = m.get("Host").unwrap().to_owned();
+    let upgrade = m.get("Upgrade").unwrap().to_owned();
+    let connection = m.get("Connection").unwrap().to_owned();
+    let key = m.get("Sec-WebSocket-Key").unwrap().to_owned();
+    let version = m.get("Sec-WebSocket-Version").unwrap().to_owned();
+    let origin = m.get("Origin").unwrap().to_owned();
+
+    if upgrade != "websocket" || connection != "Upgrade" || version != "13" {
+      return false;
+    }
+
+    let my_key = sec_websocket_key(key);
    // let mut sha1 = sha1::Sha1::new();
     //s//ha1.update(combined);
     //let hash = sha1.finalize();

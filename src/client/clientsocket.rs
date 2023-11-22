@@ -31,9 +31,9 @@ impl ClientSocket {
     let split_uri: Vec<&str> = uri.split(':').collect();
     let port_path = String::from(split_uri[1]);
     let port_path_vec: Vec<&str> = port_path.split('/').collect();
-    let mut path = String::from("");
+    let mut path = String::from("/");
     if port_path_vec.len() > 1 {
-      path = String::from(port_path_vec[1]);
+      path = String::from("/") + port_path_vec[1];
     }
     let server_uri = String::from(split_uri[0]);
     let server_port = port_path_vec[0].parse::<u16>().unwrap();
@@ -80,7 +80,6 @@ impl ClientSocket {
     match stream.read(&mut buf) {
       Ok(size) => {
         let request = String::from_utf8_lossy(&buf[..size]);
-        println!("{}", request);
         let lines: Vec<&str> = request.split('\n').collect();
         if lines[0] != "HTTP/1.1 101 Switching Protocol" {
           return false;
