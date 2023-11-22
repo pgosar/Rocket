@@ -8,6 +8,7 @@ use std::time::Duration;
 use std::collections::HashMap;
 use std::vec::Vec;
 use crate::utils::utils::*;
+use std::net::Shutdown;
 
 
 
@@ -134,7 +135,7 @@ impl ClientSocket {
               println!("Client Received: {}", from_utf8(&buf).unwrap());
             }
             Err(e) => {
-              //println!("Failed to receive data: {}", e);
+              println!("Client Failed to receive data: {}", e);
             }
           }
         }
@@ -146,8 +147,14 @@ impl ClientSocket {
     let mut stream = self.stream.as_ref().expect("Stream not instantiated")
                  .try_clone().expect("clone failed");
     let byte_msg = msg.as_bytes();
-    stream.write(byte_msg).unwrap();
-    println!("Client Sent: {}", msg);
+    match stream.write(byte_msg) {
+      Ok(_) => {
+        println!("Client Sent: {}", msg);
+      }
+      Err(err) => {
+        println!("Error writing from client: {}", err);
+      }
+    }
   }
 
   pub fn connect(&mut self) {
@@ -180,6 +187,7 @@ impl ClientSocket {
       if let Some(jh) = self.reader_thread.take() {
           jh.join().unwrap();
       }
-    } 
+    }
+    self.stream.as_ref().expect("Stream not instantiated").shutdown(Shutdown::Both).unwrap(); 
   }
 }

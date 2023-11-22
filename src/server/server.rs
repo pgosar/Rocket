@@ -2,7 +2,7 @@ use crate::utils::logging::*;
 use crate::utils::utils::*;
 use socket2::{Domain, Socket, Type};
 use std::io::prelude::*;
-use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::vec;
 use std::collections::HashMap;
 
@@ -36,9 +36,7 @@ impl Server {
       match stream {
         Ok(stream) => {
           println!("New connection: {}", stream.peer_addr().unwrap());
-          {
-            self.handle_client(stream);
-          }
+          self.handle_client(stream);
         }
         Err(e) => {
           println!("Error: {}", e);
@@ -67,10 +65,6 @@ impl Server {
     let last_word = format!(r"{}", first_line[2]);
     if first_line.len() != 3 || first_line[0] != "GET" || 
        !first_line[1].starts_with('/') || last_word.trim() != r"HTTP/1.1" {
-      println!("{}", first_line[1].starts_with('/'));
-      println!("{}", first_line[0] == "GET");
-      println!("{}", first_line[2]);
-      println!("early on failure {} second {} third {}", first_line[0], first_line[1], first_line[2]);
       return false;
     }
 
@@ -105,14 +99,22 @@ impl Server {
   }
 
   fn read_message(&mut self, buf: &mut Vec<u8>, stream: &mut TcpStream) -> bool {
-    let size = stream.read(buf).unwrap();
-    if size == 0 {
-      println!("size is 0");
-      return false;
+    match stream.read(buf) {
+      Ok(size) => {
+        if size == 0 {
+          return false;
+        }
+        let msg: String = format!("Server Read: {}", String::from_utf8_lossy(&buf[..]));
+        let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
+        self.server_log.log(m);
+
+      }
+      Err(err) => {
+        println!("server read error {}", err);
+        //stream.shutdown(Shutdown::Both).unwrap();
+        return false;
+      }
     }
-    let msg: String = format!("Server Read: {}", String::from_utf8_lossy(&buf[..]));
-    let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
-    self.server_log.log(m);
     true
   }
 
@@ -129,7 +131,7 @@ impl Server {
           "An error occurred while writing, terminating connection with {}",
           stream.peer_addr().unwrap()
         );
-        stream.shutdown(Shutdown::Both).unwrap();
+        //stream.shutdown(Shutdown::Both).unwrap();
         false
       }
     }
@@ -139,6 +141,7 @@ impl Server {
     println!("handling client");
     let mut buf: Vec<u8> = vec![0; 1024];
     let handshake_success: bool = Self::verify_client_handshake(&mut stream);
+    std::thread::sleep(std::time::Duration::from_secs(2));
     if handshake_success {
       while self.read_message(&mut buf, &mut stream) {
         if !self.write_message(&mut buf, &mut stream) {

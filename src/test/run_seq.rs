@@ -18,7 +18,7 @@ pub fn run() {
   });
   let other_client_thread = thread::spawn(move || {
     my_other_client
-      .run_client(String::from("Hello World"), 2)
+      .run_client(String::from("YOYOYO"), 2)
       .expect("Error running client");
   });
   client_thread.join().expect("Error joining client thread");
