@@ -1,11 +1,12 @@
 use crate::client::clientsocket::ClientSocket;
+
 pub struct TestClient {
   socket: ClientSocket,
 }
 
 impl TestClient {
-  pub async fn new(uri: String) -> TestClient {
-    let socket: ClientSocket = ClientSocket::new(uri).await;
+  pub async fn new(uri: String, debug: bool) -> TestClient {
+    let socket: ClientSocket = ClientSocket::new(uri, debug).await;
     TestClient { socket }
   }
 

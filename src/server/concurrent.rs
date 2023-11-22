@@ -1,6 +1,6 @@
 use crate::server::server::WEBSOCKET_PREFIX;
 use crate::utils::logging::*;
-use crate::utils::utils::OPTS;
+use crate::utils::utils::Opts;
 use base64::engine::general_purpose;
 use base64::Engine;
 use sha1::Digest;
@@ -9,13 +9,13 @@ use std::sync::{Arc, Mutex};
 use std::vec;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-
 pub struct ConcurrentServer {
   ip: String,
   port: u16,
   key: String,
   listener: TcpListener,
   server_log: Arc<Mutex<Logger>>,
+  opts: Opts,
 }
 
 async fn create_listener(ip: String, port: u16) -> TcpListener {
@@ -25,27 +25,31 @@ async fn create_listener(ip: String, port: u16) -> TcpListener {
 }
 
 impl ConcurrentServer {
-  pub async fn new(ip: String, port: u16, key: String) -> ConcurrentServer {
+  pub async fn new(ip: String, port: u16, key: String, opts: Opts) -> ConcurrentServer {
     ConcurrentServer {
       ip: ip.clone(),
       port,
       key,
       listener: create_listener(ip, port).await,
       server_log: Arc::new(Mutex::new(Logger::new())),
+      opts,
     }
   }
 
   pub async fn run_server(&mut self) -> std::io::Result<()> {
-    if *OPTS.debug() {
+    if *self.opts.debug() {
       println!("Server running on {}:{}", self.ip, self.port);
     }
     let server_log = &mut self.server_log;
     loop {
       let log_copy = Arc::clone(server_log);
       let (stream, addr) = self.listener.accept().await?;
-      println!("New client: {}", addr);
+      if *self.opts.debug() {
+        println!("New client: {}", addr);
+      }
+      let debug = (self.opts.debug()).clone();
       tokio::spawn(async move {
-        Self::handle_client(&log_copy, stream).await;
+        Self::handle_client(&log_copy, stream, debug).await;
       });
     }
   }
@@ -86,10 +90,13 @@ impl ConcurrentServer {
     server_log: &Arc<Mutex<Logger>>,
     buf: &mut Vec<u8>,
     stream: &mut TcpStream,
+    debug: bool,
   ) -> bool {
     let size = stream.read(buf).await.unwrap();
     if size == 0 {
-      println!("size is 0");
+      if debug {
+        println!("size is 0");
+      }
       return false;
     }
     let msg: String = format!("Server Read: {}", String::from_utf8_lossy(&buf[..]));
@@ -123,20 +130,23 @@ impl ConcurrentServer {
     }
   }
 
-  pub async fn handle_client(server_log: &Arc<Mutex<Logger>>, mut stream: TcpStream) {
-    println!("handling client");
+  pub async fn handle_client(server_log: &Arc<Mutex<Logger>>, mut stream: TcpStream, debug: bool) {
     let mut buf: Vec<u8> = vec![0; 1024];
     let handshake_success: bool = Self::verify_client_handshake(&mut stream).await;
     if handshake_success {
-      while Self::read_message(server_log, &mut buf, &mut stream).await {
+      while Self::read_message(server_log, &mut buf, &mut stream, debug).await {
         if !Self::write_message(server_log, &mut buf, &mut stream).await {
           break;
         }
       }
     } else {
-      println!("Invalid client handshake");
+      if debug {
+        println!("Invalid client handshake");
+      }
     }
-    println!("client all done");
+    if debug {
+      println!("client all done");
+    }
     let logger = server_log.lock().unwrap();
     logger.print_log();
   }

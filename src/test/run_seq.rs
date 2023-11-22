@@ -1,19 +1,23 @@
 use crate::server::concurrent::ConcurrentServer;
 use crate::test::testclient;
+use crate::utils::utils::Opts;
 use tokio::spawn;
 
-pub async fn run() {
+pub async fn run(opts: Opts) {
+  let debug = *opts.debug();
+  let repeats = *opts.repeats();
+
   let mut my_server =
-    ConcurrentServer::new(String::from("::1"), 8080, "1234567890".to_string()).await;
+    ConcurrentServer::new(String::from("::1"), 8080, "1234567890".to_string(), opts).await;
 
   let server_thread = spawn(async move {
     my_server.run_server().await.unwrap();
   });
 
   let client_thread = spawn(async move {
-    let mut my_client = testclient::TestClient::new(String::from("localhost:8080")).await;
+    let mut my_client = testclient::TestClient::new(String::from("localhost:8080"), debug).await;
     my_client
-      .run_client(String::from("Hello World"), 2)
+      .run_client(String::from("Hello World"), repeats)
       .await
       .unwrap();
   });
