@@ -1,4 +1,5 @@
 use crate::utils::logging::*;
+use crate::utils::utils::*;
 use base64::engine::general_purpose;
 use base64::Engine;
 use sha1::Digest;
@@ -66,16 +67,16 @@ impl Server {
     let request = String::from_utf8_lossy(&buf[..size]);
     let lines: std::vec::Vec<&str> = request.split('\n').collect();
     let key: std::vec::Vec<&str> = lines[4].split(" ").collect();
-    let combined = key[1].to_owned() + WEBSOCKET_PREFIX;
-    let mut sha1 = sha1::Sha1::new();
-    sha1.update(combined);
-    let hash = sha1.finalize();
-    let my_key: String = general_purpose::STANDARD.encode(&hash[..]);
+    let my_key = sec_websocket_key(key[1].to_owned());
+   // let mut sha1 = sha1::Sha1::new();
+    //s//ha1.update(combined);
+    //let hash = sha1.finalize();
+    //let my_key: String = general_purpose::STANDARD.encode(&hash[..]);
     let response: String = format!(
       "HTTP/1.1 101 Switching Protocols\n\
-            Upgrade: websocket\n\
-            Connection: Upgrade\n\
-            Sec-WebSocket-Accept: {}",
+      Upgrade: websocket\n\
+      Connection: Upgrade\n\
+      Sec-WebSocket-Accept: {}",
       my_key
     );
     stream.write(response.as_bytes()).unwrap();

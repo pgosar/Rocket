@@ -5,6 +5,10 @@ use std::str::from_utf8;
 use std::thread;
 use std::sync::mpsc::{self, TryRecvError};
 use std::time::Duration;
+use std::collections::HashMap;
+use std::vec::Vec;
+use crate::utils::utils::*;
+
 
 
 pub struct ClientSocket {
@@ -24,9 +28,9 @@ fn generate_key() -> String {
 
 impl ClientSocket {
   pub fn new(uri: String) -> ClientSocket {
-    let split_uri: std::vec::Vec<&str> = uri.split(':').collect();
+    let split_uri: Vec<&str> = uri.split(':').collect();
     let port_path = String::from(split_uri[1]);
-    let port_path_vec: std::vec::Vec<&str> = port_path.split('/').collect();
+    let port_path_vec: Vec<&str> = port_path.split('/').collect();
     let mut path = String::from("");
     if port_path_vec.len() > 1 {
       path = String::from(port_path_vec[1]);
@@ -52,12 +56,12 @@ impl ClientSocket {
     let my_key: String = generate_key();
     let handshake = format!(
       "GET {} HTTP/1.1\n\
-            Host: {}:{}\n\
-            Upgrade: websocket\n\
-            Connection: Upgrade\n\
-            Sec-WebSocket-Key: {}\n\
-            Origin: {}:{}\n\
-            Sec-WebSocket-Version: 13",
+      Host: {}:{}\n\
+      Upgrade: websocket\n\
+      Connection: Upgrade\n\
+      Sec-WebSocket-Key: {}\n\
+      Origin: {}:{}\n\
+      Sec-WebSocket-Version: 13",
       self.server_path,
       self.server_uri,
       self.server_port,
@@ -65,10 +69,49 @@ impl ClientSocket {
       my_addr.ip().to_string(),
       my_addr.port().to_string(),
     );
+    match stream.write(handshake.as_bytes()) {
+      Ok(_) => {}
+      Err(e) => {
+        println!("Failed to send handshake: {}", e);
+        return false;
+      }
+    }
     stream.write(handshake.as_bytes()).expect("write failed");
     match stream.read(&mut buf) {
-      Ok(_) => {
-        println!("Client Received: {}", from_utf8(&buf).unwrap());
+      Ok(size) => {
+        let request = String::from_utf8_lossy(&buf[..size]);
+        println!("{}", request);
+        let lines: Vec<&str> = request.split('\n').collect();
+        if lines[0] != "HTTP/1.1 101 Switching Protocol" {
+          return false;
+        }
+        let mut m: HashMap<String, Option<String>> = HashMap::from([
+          (String::from("Upgrade"), None),
+          (String::from("Connection"), None),
+          (String::from("Sec-WebSocket-Accept"), None)
+        ]);
+        for line in lines[1..].iter() {
+          let split_line: Vec<&str> = (*line).split(": ").collect();
+          if split_line.len() != 2 {
+            return false;
+          }
+          let mut old = m.get(split_line[0]);
+          if old.is_none() || old.take().is_some() { // each correct key should exist once and only once
+            return false;
+          }
+          m.insert(String::from(split_line[0]), Some(String::from(split_line[1])));
+        }
+        let upgrade = m.get("Upgrade").to_owned().unwrap().to_owned().unwrap();
+        let connection = m.get("Connection").to_owned().unwrap().to_owned().unwrap();
+        let swk = m.get("Sec-WebSocket-Accept").to_owned().unwrap().to_owned().unwrap();
+        if upgrade != "websocket" || connection != "Upgrade" 
+          || swk != sec_websocket_key(my_key) {
+          return false;
+        }
+
+
+        // HTTP/1.1 101 Switching Protocol
+        // expected = Upgrade, Connection, Sec-WebSocket-Accept
       }
       Err(e) => {
         println!("Failed to receive data: {}", e);
