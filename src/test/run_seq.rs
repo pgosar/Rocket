@@ -3,10 +3,9 @@ use crate::test::testclient;
 use tokio::spawn;
 
 pub async fn run() {
-  
   let mut my_server =
     ConcurrentServer::new(String::from("::1"), 8080, "1234567890".to_string()).await;
-  
+
   let server_thread = spawn(async move {
     my_server.run_server().await.unwrap();
   });
@@ -21,5 +20,4 @@ pub async fn run() {
 
   server_thread.await.unwrap();
   client_thread.await.unwrap();
-
 }

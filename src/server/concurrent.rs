@@ -1,14 +1,14 @@
 use crate::server::server::WEBSOCKET_PREFIX;
 use crate::utils::logging::*;
+use crate::utils::utils::OPTS;
 use base64::engine::general_purpose;
 use base64::Engine;
 use sha1::Digest;
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use std::vec;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
-
 
 pub struct ConcurrentServer {
   ip: String,
@@ -36,7 +36,9 @@ impl ConcurrentServer {
   }
 
   pub async fn run_server(&mut self) -> std::io::Result<()> {
-    println!("Server running on {}:{}", self.ip, self.port);
+    if *OPTS.debug() {
+      println!("Server running on {}:{}", self.ip, self.port);
+    }
     let server_log = &mut self.server_log;
     loop {
       let log_copy = Arc::clone(server_log);
@@ -58,7 +60,7 @@ impl ConcurrentServer {
       let first_line: Vec<&str> = lines[0].split(" ").collect();
   }*/
 
-  async fn verify_client_handshake(stream: &mut TcpStream) -> bool {
+  pub async fn verify_client_handshake(stream: &mut TcpStream) -> bool {
     let mut buf = [0; 1024];
     let size = stream.read(&mut buf).await.unwrap();
     let request = String::from_utf8_lossy(&buf[..size]);
@@ -80,7 +82,11 @@ impl ConcurrentServer {
     true
   }
 
-  async fn read_message(server_log: &Arc<Mutex<Logger>>, buf: &mut Vec<u8>, stream: &mut TcpStream) -> bool {
+  pub async fn read_message(
+    server_log: &Arc<Mutex<Logger>>,
+    buf: &mut Vec<u8>,
+    stream: &mut TcpStream,
+  ) -> bool {
     let size = stream.read(buf).await.unwrap();
     if size == 0 {
       println!("size is 0");
@@ -93,7 +99,11 @@ impl ConcurrentServer {
     true
   }
 
-  async fn write_message(server_log: &Arc<Mutex<Logger>>, buf: &mut Vec<u8>, stream: &mut TcpStream) -> bool {
+  pub async fn write_message(
+    server_log: &Arc<Mutex<Logger>>,
+    buf: &mut Vec<u8>,
+    stream: &mut TcpStream,
+  ) -> bool {
     match stream.write(&buf).await {
       Ok(_) => {
         let msg: String = format!("Server Write: {}", String::from_utf8_lossy(&buf[..]));
