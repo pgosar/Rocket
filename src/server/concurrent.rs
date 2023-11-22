@@ -7,13 +7,15 @@ use std::net::SocketAddr;
 use std::vec;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use std::sync::{Arc, Mutex};
+
 
 pub struct ConcurrentServer {
   ip: String,
   port: u16,
   key: String,
   listener: TcpListener,
-  server_log: Logger,
+  server_log: Arc<Mutex<Logger>>,
 }
 
 async fn create_listener(ip: String, port: u16) -> TcpListener {
@@ -29,17 +31,19 @@ impl ConcurrentServer {
       port,
       key,
       listener: create_listener(ip, port).await,
-      server_log: Logger::new(),
+      server_log: Arc::new(Mutex::new(Logger::new())),
     }
   }
 
   pub async fn run_server(&mut self) -> std::io::Result<()> {
     println!("Server running on {}:{}", self.ip, self.port);
+    let server_log = &mut self.server_log;
     loop {
+      let log_copy = Arc::clone(server_log);
       let (stream, addr) = self.listener.accept().await?;
       println!("New client: {}", addr);
       tokio::spawn(async move {
-        self.handle_client(stream).await;
+        Self::handle_client(&log_copy, stream).await;
       });
     }
   }
@@ -54,7 +58,7 @@ impl ConcurrentServer {
       let first_line: Vec<&str> = lines[0].split(" ").collect();
   }*/
 
-  async fn verify_client_handshake(&self, stream: &mut TcpStream) -> bool {
+  async fn verify_client_handshake(stream: &mut TcpStream) -> bool {
     let mut buf = [0; 1024];
     let size = stream.read(&mut buf).await.unwrap();
     let request = String::from_utf8_lossy(&buf[..size]);
@@ -76,7 +80,7 @@ impl ConcurrentServer {
     true
   }
 
-  async fn read_message(&mut self, buf: &mut Vec<u8>, stream: &mut TcpStream) -> bool {
+  async fn read_message(server_log: &Arc<Mutex<Logger>>, buf: &mut Vec<u8>, stream: &mut TcpStream) -> bool {
     let size = stream.read(buf).await.unwrap();
     if size == 0 {
       println!("size is 0");
@@ -84,16 +88,18 @@ impl ConcurrentServer {
     }
     let msg: String = format!("Server Read: {}", String::from_utf8_lossy(&buf[..]));
     let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
-    self.server_log.log(m);
+    let mut logger = server_log.lock().unwrap();
+    logger.log(m);
     true
   }
 
-  async fn write_message(&mut self, buf: &mut Vec<u8>, stream: &mut TcpStream) -> bool {
+  async fn write_message(server_log: &Arc<Mutex<Logger>>, buf: &mut Vec<u8>, stream: &mut TcpStream) -> bool {
     match stream.write(&buf).await {
       Ok(_) => {
         let msg: String = format!("Server Write: {}", String::from_utf8_lossy(&buf[..]));
         let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
-        self.server_log.log(m);
+        let mut logger = server_log.lock().unwrap();
+        logger.log(m);
         true
       }
       Err(_) => {
@@ -107,13 +113,13 @@ impl ConcurrentServer {
     }
   }
 
-  pub async fn handle_client(&mut self, mut stream: TcpStream) {
+  pub async fn handle_client(server_log: &Arc<Mutex<Logger>>, mut stream: TcpStream) {
     println!("handling client");
     let mut buf: Vec<u8> = vec![0; 1024];
-    let handshake_success: bool = self.verify_client_handshake(&mut stream).await;
+    let handshake_success: bool = Self::verify_client_handshake(&mut stream).await;
     if handshake_success {
-      while self.read_message(&mut buf, &mut stream).await {
-        if !self.write_message(&mut buf, &mut stream).await {
+      while Self::read_message(server_log, &mut buf, &mut stream).await {
+        if !Self::write_message(server_log, &mut buf, &mut stream).await {
           break;
         }
       }
@@ -121,6 +127,7 @@ impl ConcurrentServer {
       println!("Invalid client handshake");
     }
     println!("client all done");
-    self.server_log.print_log();
+    let logger = server_log.lock().unwrap();
+    logger.print_log();
   }
 }
