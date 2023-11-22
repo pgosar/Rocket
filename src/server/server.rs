@@ -64,19 +64,22 @@ impl Server {
     let request = String::from_utf8_lossy(&buf[..size]);
     let lines: std::vec::Vec<&str> = request.split('\n').collect();
     let first_line: vec::Vec<&str> = lines[0].split(' ').collect();
+    let last_word = format!(r"{}", first_line[2]);
     if first_line.len() != 3 || first_line[0] != "GET" || 
-       !first_line[1].starts_with('/') || first_line[2] != "HTTP/1.1" {
-        println!("early on failure {} {} {}", first_line[0], first_line[1], first_line[2]);
+       !first_line[1].starts_with('/') || last_word.trim() != r"HTTP/1.1" {
+      println!("{}", first_line[1].starts_with('/'));
+      println!("{}", first_line[0] == "GET");
+      println!("{}", first_line[2]);
+      println!("early on failure {} second {} third {}", first_line[0], first_line[1], first_line[2]);
       return false;
     }
 
     let mut m: HashMap<String, String> = HashMap::new();
     for line in lines[1..].iter() {
-      let split_line: Vec<&str> = (*line).split(": ").collect();
-      if split_line.len() != 2 {
-        return false;
+      let split_line: Vec<&str> = (line.to_owned()).split(": ").collect();
+      if split_line.len() == 2 {
+        m.insert(String::from(split_line[0]), String::from(split_line[1]));
       }
-      m.insert(String::from(split_line[0]), String::from(split_line[1]));
     }
     let host = m.get("Host").unwrap().to_owned();
     let upgrade = m.get("Upgrade").unwrap().to_owned();
@@ -85,15 +88,11 @@ impl Server {
     let version = m.get("Sec-WebSocket-Version").unwrap().to_owned();
     let origin = m.get("Origin").unwrap().to_owned();
 
-    if upgrade != "websocket" || connection != "Upgrade" || version != "13" {
+    if upgrade.trim() != "websocket" || connection.trim() != "Upgrade" || version.trim() != "13" {
       return false;
     }
 
     let my_key = sec_websocket_key(key);
-   // let mut sha1 = sha1::Sha1::new();
-    //s//ha1.update(combined);
-    //let hash = sha1.finalize();
-    //let my_key: String = general_purpose::STANDARD.encode(&hash[..]);
     let response: String = format!(
       "HTTP/1.1 101 Switching Protocols\n\
       Upgrade: websocket\n\
