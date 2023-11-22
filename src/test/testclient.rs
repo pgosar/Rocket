@@ -4,8 +4,8 @@ pub struct TestClient {
 }
 
 impl TestClient {
-  pub fn new(uri: String) -> TestClient {
-    let socket: ClientSocket = ClientSocket::new(uri);
+  pub async fn new(uri: String) -> TestClient {
+    let socket: ClientSocket = ClientSocket::new(uri).await;
     TestClient { socket }
   }
 

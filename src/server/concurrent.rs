@@ -3,10 +3,10 @@ use crate::utils::logging::*;
 use base64::engine::general_purpose;
 use base64::Engine;
 use sha1::Digest;
-use socket2::{Domain, Socket, Type};
-use std::io::prelude::*;
-use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::net::SocketAddr;
 use std::vec;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 
 pub struct ConcurrentServer {
   ip: String,
@@ -16,42 +16,32 @@ pub struct ConcurrentServer {
   server_log: Logger,
 }
 
-fn create_listener(ip: String, port: u16) -> TcpListener {
-  let sock = Socket::new(Domain::IPV6, Type::STREAM, None).unwrap();
-  sock.set_only_v6(false).unwrap();
+async fn create_listener(ip: String, port: u16) -> TcpListener {
   let address: SocketAddr = format!("[{}]:{}", ip, port).parse().unwrap();
-  sock.bind(&address.into()).unwrap();
-  sock.listen(128).unwrap();
-  let listener: TcpListener = sock.into();
+  let listener: TcpListener = TcpListener::bind(address).await.unwrap();
   listener
 }
 
 impl ConcurrentServer {
-  pub fn new(ip: String, port: u16, key: String) -> ConcurrentServer {
+  pub async fn new(ip: String, port: u16, key: String) -> ConcurrentServer {
     ConcurrentServer {
       ip: ip.clone(),
       port,
       key,
-      listener: create_listener(ip, port),
+      listener: create_listener(ip, port).await,
       server_log: Logger::new(),
     }
   }
 
   pub async fn run_server(&mut self) -> std::io::Result<()> {
-    for stream in self.listener.try_clone()?.incoming() {
-      match stream {
-        Ok(stream) => {
-          println!("New connection: {}", stream.peer_addr().unwrap());
-          {
-            self.handle_client(stream).await;
-          }
-        }
-        Err(e) => {
-          println!("Error: {}", e);
-        }
-      }
+    println!("Server running on {}:{}", self.ip, self.port);
+    loop {
+      let (stream, addr) = self.listener.accept().await?;
+      println!("New client: {}", addr);
+      tokio::spawn(async move {
+        self.handle_client(stream).await;
+      });
     }
-    Ok(())
   }
 
   /*fn verify_structure(std::vec::Vec<&str>& lines) -> bool {
@@ -64,9 +54,9 @@ impl ConcurrentServer {
       let first_line: Vec<&str> = lines[0].split(" ").collect();
   }*/
 
-  fn verify_client_handshake(&self, stream: &mut TcpStream) -> bool {
+  async fn verify_client_handshake(&self, stream: &mut TcpStream) -> bool {
     let mut buf = [0; 1024];
-    let size = stream.read(&mut buf).unwrap();
+    let size = stream.read(&mut buf).await.unwrap();
     let request = String::from_utf8_lossy(&buf[..size]);
     let lines: std::vec::Vec<&str> = request.split('\n').collect();
     let key: std::vec::Vec<&str> = lines[4].split(" ").collect();
@@ -82,12 +72,12 @@ impl ConcurrentServer {
             Sec-WebSocket-Accept: {}",
       my_key
     );
-    stream.write(response.as_bytes()).unwrap();
+    stream.write(response.as_bytes()).await.unwrap();
     true
   }
 
   async fn read_message(&mut self, buf: &mut Vec<u8>, stream: &mut TcpStream) -> bool {
-    let size = stream.read(buf).unwrap();
+    let size = stream.read(buf).await.unwrap();
     if size == 0 {
       println!("size is 0");
       return false;
@@ -99,7 +89,7 @@ impl ConcurrentServer {
   }
 
   async fn write_message(&mut self, buf: &mut Vec<u8>, stream: &mut TcpStream) -> bool {
-    match stream.write(&buf) {
+    match stream.write(&buf).await {
       Ok(_) => {
         let msg: String = format!("Server Write: {}", String::from_utf8_lossy(&buf[..]));
         let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
@@ -111,7 +101,7 @@ impl ConcurrentServer {
           "An error occurred while writing, terminating connection with {}",
           stream.peer_addr().unwrap()
         );
-        stream.shutdown(Shutdown::Both).unwrap();
+        stream.shutdown().await.unwrap();
         false
       }
     }
@@ -120,7 +110,7 @@ impl ConcurrentServer {
   pub async fn handle_client(&mut self, mut stream: TcpStream) {
     println!("handling client");
     let mut buf: Vec<u8> = vec![0; 1024];
-    let handshake_success: bool = self.verify_client_handshake(&mut stream);
+    let handshake_success: bool = self.verify_client_handshake(&mut stream).await;
     if handshake_success {
       while self.read_message(&mut buf, &mut stream).await {
         if !self.write_message(&mut buf, &mut stream).await {
