@@ -1,6 +1,5 @@
 use base64::{engine::general_purpose, Engine};
 use std::str::from_utf8;
-//use std::thread;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::mpsc::error::TryRecvError;
 use std::collections::HashMap;
@@ -147,20 +146,6 @@ impl ClientSocket {
               }
               break;
             }
-            /*rr(TryRecvError::Empty) => {
-              match stream.read(&mut buf) {
-                Ok(_) => {
-                  if debug {
-                  println!("Client Received: {}", from_utf8(&buf).unwrap());
-                  }
-                }
-                Err(e) => {
-                  if debug {
-                  println!("Client Failed to receive data: {}", e);
-                  }
-                }
-              }
-            }*/
           }
         }
         Err(TryRecvError::Empty) => {
@@ -204,7 +189,7 @@ impl ClientSocket {
               self.server_port
             );
           }
-          let (tx, rx) = channel(100);
+          let (tx, rx) = channel(8);
           self.sender = Some(tx);
           let debug = self.debug;
           let mut stream_clone = Arc::clone(self.stream.as_mut().unwrap());
