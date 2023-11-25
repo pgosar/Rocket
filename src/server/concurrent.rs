@@ -112,17 +112,25 @@ impl ConcurrentServer {
     stream: &mut TcpStream,
     debug: bool,
   ) -> bool {
-    let size = stream.read(buf).await.unwrap();
-    if size == 0 {
-      if debug {
-        println!("size is 0");
+    match stream.read(buf).await {
+      Ok(size) => {
+        if size == 0 {
+          if debug {
+            println!("size is 0");
+          }
+          return false;
+        }
+        let msg: String = format!("Server Read: {}", String::from_utf8_lossy(&buf[..]));
+        let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
+        let mut logger = server_log.lock().unwrap();
+        logger.log(m);
       }
-      return false;
+      Err(err) => {
+        println!("{}", err);
+        return false;
+      }
+
     }
-    let msg: String = format!("Server Read: {}", String::from_utf8_lossy(&buf[..]));
-    let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
-    let mut logger = server_log.lock().unwrap();
-    logger.log(m);
     true
   }
 
