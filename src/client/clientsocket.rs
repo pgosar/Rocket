@@ -1,16 +1,15 @@
-use base64::{engine::general_purpose, Engine};
-use std::str::from_utf8;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::sync::mpsc::error::TryRecvError;
-use std::collections::HashMap;
-use std::vec::Vec;
 use crate::utils::utils::*;
+use base64::{engine::general_purpose, Engine};
+use std::collections::HashMap;
+use std::str::from_utf8;
+use std::vec::Vec;
+use tokio::sync::mpsc::error::TryRecvError;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
 
-
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use std::sync::{Arc, Mutex};
 
 pub struct ClientSocket {
   server_uri: String,
@@ -81,7 +80,10 @@ impl ClientSocket {
         return false;
       }
     }
-    stream.write(handshake.as_bytes()).await.expect("write failed");
+    stream
+      .write(handshake.as_bytes())
+      .await
+      .expect("write failed");
     match stream.read(&mut buf).await {
       Ok(size) => {
         let request = String::from_utf8_lossy(&buf[..size]);
@@ -92,7 +94,7 @@ impl ClientSocket {
         let mut m: HashMap<String, Option<String>> = HashMap::from([
           (String::from("Upgrade"), None),
           (String::from("Connection"), None),
-          (String::from("Sec-WebSocket-Accept"), None)
+          (String::from("Sec-WebSocket-Accept"), None),
         ]);
         for line in lines[1..].iter() {
           let split_line: Vec<&str> = (*line).split(": ").collect();
@@ -100,19 +102,27 @@ impl ClientSocket {
             return false;
           }
           let mut old = m.get(split_line[0]);
-          if old.is_none() || old.take().is_some() { // each correct key should exist once and only once
+          if old.is_none() || old.take().is_some() {
+            // each correct key should exist once and only once
             return false;
           }
-          m.insert(String::from(split_line[0]), Some(String::from(split_line[1])));
+          m.insert(
+            String::from(split_line[0]),
+            Some(String::from(split_line[1])),
+          );
         }
         let upgrade = m.get("Upgrade").to_owned().unwrap().to_owned().unwrap();
         let connection = m.get("Connection").to_owned().unwrap().to_owned().unwrap();
-        let swk = m.get("Sec-WebSocket-Accept").to_owned().unwrap().to_owned().unwrap();
-        if upgrade != "websocket" || connection != "Upgrade" 
-          || swk != sec_websocket_key(my_key) {
+        let swk = m
+          .get("Sec-WebSocket-Accept")
+          .to_owned()
+          .unwrap()
+          .to_owned()
+          .unwrap();
+        if upgrade != "websocket" || connection != "Upgrade" || swk != sec_websocket_key(my_key) {
           return false;
         }
-    }
+      }
       Err(e) => {
         if self.debug {
           println!("Failed to receive data: {}", e);
@@ -126,28 +136,30 @@ impl ClientSocket {
     true
   }
 
-  async fn reader_loop(arc_stream: &mut Arc<TcpStream>, receiver: &mut Arc<Mutex<Receiver<()>>>, debug: bool) {
+  async fn reader_loop(
+    arc_stream: &mut Arc<TcpStream>,
+    receiver: &mut Arc<Mutex<Receiver<()>>>,
+    debug: bool,
+  ) {
     let stream = Arc::get_mut(arc_stream).unwrap();
     let mut buf = vec![0; 1024];
     //stream.set_read_timeout(Some(Duration::new(1, 0))).unwrap();
     let rcv = Arc::get_mut(receiver).unwrap().get_mut().unwrap();
     loop {
       match rcv.try_recv() {
-        Ok(_) | Err(TryRecvError::Disconnected) => {
-          match stream.read(&mut buf).await {
-            Ok(_) => {
-              if debug {
-                println!("Client Received: {}", from_utf8(&buf).unwrap());
-              }
-            }
-            Err(e) => {
-              if debug {
-                println!("Failed to receive data: {}", e);
-              }
-              break;
+        Ok(_) | Err(TryRecvError::Disconnected) => match stream.read(&mut buf).await {
+          Ok(_) => {
+            if debug {
+              println!("Client Received: {}", from_utf8(&buf).unwrap());
             }
           }
-        }
+          Err(e) => {
+            if debug {
+              println!("Failed to receive data: {}", e);
+            }
+            break;
+          }
+        },
         Err(TryRecvError::Empty) => {
           if debug {
             println!("Empty");
@@ -211,9 +223,14 @@ impl ClientSocket {
     if let Some(tx) = self.sender.take() {
       tx.send(()).await.unwrap();
       if let Some(jh) = self.reader_thread.take() {
-          jh.await.unwrap();
+        jh.await.unwrap();
       }
     }
-    Arc::get_mut(self.stream.as_mut().unwrap()).expect("Stream not instantiated").shutdown().await.unwrap();
+    Arc::get_mut(self.stream.as_mut().unwrap())
+      .expect("Stream not instantiated")
+      .shutdown()
+      .await
+      .unwrap();
   }
 }
+

@@ -1,12 +1,11 @@
 use crate::utils::logging::*;
-use crate::utils::utils::{Opts, sec_websocket_key};
+use crate::utils::utils::{sec_websocket_key, Opts};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::vec;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use std::collections::HashMap;
-
 
 pub struct ConcurrentServer {
   ip: String,
@@ -53,17 +52,6 @@ impl ConcurrentServer {
     }
   }
 
-  /*fn verify_structure(std::vec::Vec<&str>& lines) -> bool {
-      // first line must be GET {} HTTP/1.1
-      // you should be able to split each line by ": "
-      // if you do that you have a pair of strings where the first is the key and the latter is the value
-      // You want to see that Host, Upgrade, Connection, Sec-WebSocket-Key, Origin, Sec-WebSocket-Version are
-      // all present and each only once
-      // Upgrade: websocket, Connection: Upgrade, Sec-WebSocket-Version: 13
-      let first_line: Vec<&str> = lines[0].split(" ").collect();
-  }*/
-
-
   async fn verify_client_handshake(stream: &mut TcpStream) -> bool {
     let mut buf = [0; 1024];
     let size = stream.read(&mut buf).await.unwrap();
@@ -71,8 +59,11 @@ impl ConcurrentServer {
     let lines: std::vec::Vec<&str> = request.split('\n').collect();
     let first_line: vec::Vec<&str> = lines[0].split(' ').collect();
     let last_word = format!(r"{}", first_line[2]);
-    if first_line.len() != 3 || first_line[0] != "GET" || 
-       !first_line[1].starts_with('/') || last_word.trim() != r"HTTP/1.1" {
+    if first_line.len() != 3
+      || first_line[0] != "GET"
+      || !first_line[1].starts_with('/')
+      || last_word.trim() != r"HTTP/1.1"
+    {
       return false;
     }
     let mut m: HashMap<String, String> = HashMap::new();
@@ -104,8 +95,6 @@ impl ConcurrentServer {
     true
   }
 
-  
-
   pub async fn read_message(
     server_log: &Arc<Mutex<Logger>>,
     buf: &mut Vec<u8>,
@@ -129,7 +118,6 @@ impl ConcurrentServer {
         println!("{}", err);
         return false;
       }
-
     }
     true
   }
