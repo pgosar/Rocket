@@ -1,7 +1,8 @@
 use base64::{engine::general_purpose, Engine};
 use std::str::from_utf8;
 //use std::thread;
-use std::sync::mpsc::{self, TryRecvError};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::error::TryRecvError;
 use std::collections::HashMap;
 use std::vec::Vec;
 use crate::utils::utils::*;
@@ -10,7 +11,7 @@ use tokio::task::JoinHandle;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub struct ClientSocket {
   server_uri: String,
@@ -18,7 +19,7 @@ pub struct ClientSocket {
   server_path: String,
   stream: Option<Arc<TcpStream>>,
   reader_thread: Option<JoinHandle<()>>,
-  sender: Option<mpsc::Sender<()>>,
+  sender: Option<Sender<()>>,
   debug: bool,
 }
 
@@ -56,7 +57,7 @@ impl ClientSocket {
   async fn handshake_http(&mut self) -> bool {
     //dGhlIHNhbXBsZSBub25jZQ==
     let mut buf = vec![0; 1024];
-    let stream = self.stream.as_mut().unwrap();
+    let stream = Arc::get_mut(self.stream.as_mut().unwrap()).unwrap();
     let my_addr: std::net::SocketAddr = stream.local_addr().unwrap();
     let my_key: String = generate_key();
     let handshake = format!(
@@ -126,12 +127,13 @@ impl ClientSocket {
     true
   }
 
-  async fn reader_loop(arc_stream: &mut Arc<TcpStream>, receiver: mpsc::Receiver<()>, debug: bool) {
+  async fn reader_loop(arc_stream: &mut Arc<TcpStream>, receiver: &mut Arc<Mutex<Receiver<()>>>, debug: bool) {
     let stream = Arc::get_mut(arc_stream).unwrap();
     let mut buf = vec![0; 1024];
     //stream.set_read_timeout(Some(Duration::new(1, 0))).unwrap();
+    let rcv = Arc::get_mut(receiver).unwrap().get_mut().unwrap();
     loop {
-      match receiver.try_recv() {
+      match rcv.try_recv() {
         Ok(_) | Err(TryRecvError::Disconnected) => {
           match stream.read(&mut buf).await {
             Ok(_) => {
@@ -202,12 +204,13 @@ impl ClientSocket {
               self.server_port
             );
           }
-          let (tx, rx) = mpsc::channel();
+          let (tx, rx) = channel(100);
           self.sender = Some(tx);
           let debug = self.debug;
-          let stream_clone = Arc::clone(&self.stream.unwrap());
+          let mut stream_clone = Arc::clone(self.stream.as_mut().unwrap());
+          let mut recv_clone = Arc::new(Mutex::new(rx));
           self.reader_thread = Some(tokio::spawn(async move {
-            Self::reader_loop(&mut stream_clone, rx, debug).await
+            Self::reader_loop(&mut stream_clone, &mut recv_clone, debug).await
           }));
         }
       }
@@ -219,13 +222,13 @@ impl ClientSocket {
     }
   }
 
-  pub fn disconnect(&mut self) {
+  pub async fn disconnect(&mut self) {
     if let Some(tx) = self.sender.take() {
-      tx.send(()).unwrap();
+      tx.send(()).await.unwrap();
       if let Some(jh) = self.reader_thread.take() {
-          jh.join().unwrap();
+          jh.await.unwrap();
       }
     }
-    self.stream.as_mut().expect("Stream not instantiated").shutdown();
+    Arc::get_mut(self.stream.as_mut().unwrap()).expect("Stream not instantiated").shutdown().await.unwrap();
   }
 }
