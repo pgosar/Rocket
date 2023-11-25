@@ -14,7 +14,7 @@ pub async fn run(opts: Opts) {
     my_server.run_server().await.unwrap();
   });
 
-  let client_thread = spawn(async move {
+ /*let client_thread = spawn(async move {
     let mut my_client = testclient::TestClient::new(String::from("localhost:8080"), debug).await;
     my_client
       .run_client(String::from("Hello World"), repeats)
@@ -28,9 +28,9 @@ pub async fn run(opts: Opts) {
       .run_client(String::from("Other Client"), repeats)
       .await
       .unwrap();
-  });
+  });*/
 
   server_thread.await.unwrap();
-  client_thread.await.unwrap();
-  client_thread_2.await.unwrap();
+  //client_thread.await.unwrap();
+  //client_thread_2.await.unwrap();
 }

@@ -22,6 +22,86 @@ async fn create_listener(ip: String, port: u16) -> TcpListener {
   listener
 }
 
+pub fn pack_message_frame(payload: String) -> Vec<u8> {
+  // FIN = 1 (only frame in message), RSV1-3 = 0, opcode = 0001 (text frame)
+  let mut frame: Vec<u8> = vec![0b10000001]; 
+  frame.reserve(1024);
+
+  let mut second_byte: u8 = 0;
+  let strlen = payload.len() as u64;
+  let mut len_bytes = 0;
+  //if from_client { // set mask bit
+    //second_byte += 1 << 7;
+  //}
+  if strlen > 65535 { // 8 byte payload len
+    second_byte += 127;
+    len_bytes = 8;
+  } else if strlen > 125 { // 2 byte payload len
+    second_byte += 126;
+    len_bytes = 2;
+  } else {
+    second_byte += (strlen) as u8;
+  }
+  frame.push(second_byte);
+
+  if len_bytes == 8 {
+    let bytes = u64::to_be_bytes(strlen);
+    frame.extend_from_slice(&bytes);
+  } else if len_bytes == 2 {
+    let bytes = u16::to_be_bytes(strlen as u16);
+    frame.extend_from_slice(&bytes);
+  }
+
+  frame.extend_from_slice(payload.as_bytes());
+  frame
+}
+
+fn unpack_client_frame(buf: &mut Vec<u8>) -> Option<String> {
+  println!("in the client frame");
+  let first_byte = buf[0];
+  let fin: bool = (first_byte & 128) >> 7 == 1;
+  if !fin { // change
+    return None;
+  }
+  let rsv: u8 = first_byte & 0b01110000;
+  if rsv != 0 {
+    return None;
+  }
+  let opcode: u8 = first_byte & 15;
+  if opcode != 1 { // text frame, change this later
+    println!("opcode {}", opcode);
+    return None;
+  }
+
+  let second_byte = buf[1];
+  let mask: bool = (second_byte & 128) >> 7 == 1;
+  if !mask { // clients must mask stuff
+    return None;
+  }
+  let second_byte_payload_len = second_byte & 127;
+  let mut payload_len: usize = second_byte_payload_len as usize;
+  let mut payload_len_bytes: usize = 0;
+  if second_byte_payload_len == 127 {
+    payload_len_bytes = 8;
+    payload_len = u64::from_be_bytes(buf[2..10].try_into().unwrap()) as usize;
+  } else if second_byte_payload_len == 126 {
+    payload_len_bytes = 2;
+    payload_len = u16::from_be_bytes(buf[2..4].try_into().unwrap()) as usize;
+  }
+
+  let mask_key_start = payload_len_bytes + 2;
+  let mut masking_key: Vec<u8> = vec![0;4];
+  masking_key.clone_from_slice(&buf[mask_key_start..mask_key_start+4]);
+  
+  let payload = &mut buf[mask_key_start+4..mask_key_start+4+payload_len];
+  for i in 0..payload_len {
+    payload[i] ^= masking_key[i % 4];
+  }
+  let s = (*String::from_utf8_lossy(payload)).to_string();
+
+  Some(s)
+}
+
 impl ConcurrentServer {
   pub async fn new(ip: String, port: u16, key: String, opts: Opts) -> ConcurrentServer {
     ConcurrentServer {
@@ -44,6 +124,7 @@ impl ConcurrentServer {
       let (stream, addr) = self.listener.accept().await?;
       if *self.opts.debug() {
         println!("New client: {}", addr);
+        
       }
       let debug = (self.opts.debug()).clone();
       tokio::spawn(async move {
@@ -76,19 +157,21 @@ impl ConcurrentServer {
     let host = m.get("Host").unwrap().to_owned();
     let upgrade = m.get("Upgrade").unwrap().to_owned();
     let connection = m.get("Connection").unwrap().to_owned();
-    let key = m.get("Sec-WebSocket-Key").unwrap().to_owned();
+    let key = String::from(m.get("Sec-WebSocket-Key").unwrap().to_owned().trim());
+    //println!("{}", key);
     let version = m.get("Sec-WebSocket-Version").unwrap().to_owned();
     let origin = m.get("Origin").unwrap().to_owned();
 
     if upgrade.trim() != "websocket" || connection.trim() != "Upgrade" || version.trim() != "13" {
       return false;
     }
+
     let my_key = sec_websocket_key(key);
     let response: String = format!(
-      "HTTP/1.1 101 Switching Protocols\n\
-      Upgrade: websocket\n\
-      Connection: Upgrade\n\
-      Sec-WebSocket-Accept: {}",
+      "HTTP/1.1 101 Switching Protocols\r\n\
+      Upgrade: websocket\r\n\
+      Connection: Upgrade\r\n\
+      Sec-WebSocket-Accept: {}\r\n\r\n",
       my_key
     );
     stream.write(response.as_bytes()).await.unwrap();
@@ -109,10 +192,21 @@ impl ConcurrentServer {
           }
           return false;
         }
-        let msg: String = format!("Server Read: {}", String::from_utf8_lossy(&buf[..]));
-        let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
-        let mut logger = server_log.lock().unwrap();
-        logger.log(m);
+
+        let msg = unpack_client_frame(buf);
+        match msg {
+          None => {
+            return false;
+          }
+          Some(payload) => {
+            let log_msg: String = format!("Server Read: {}", &payload);
+            let m: Message = Message::new(log_msg.clone(), ErrorLevel::INFO);
+            let mut logger = server_log.lock().unwrap();
+            logger.log(m);
+          }
+        }
+
+        
       }
       Err(err) => {
         println!("{}", err);
@@ -124,22 +218,25 @@ impl ConcurrentServer {
 
   pub async fn write_message(
     server_log: &Arc<Mutex<Logger>>,
-    buf: &mut Vec<u8>,
+    message: &String,
     stream: &mut TcpStream,
   ) -> bool {
+    let buf = pack_message_frame(message.clone());
     match stream.write(&buf).await {
       Ok(_) => {
-        let msg: String = format!("Server Write: {}", String::from_utf8_lossy(&buf[..]));
+        let msg: String = format!("Server Write: {}", message);
         let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
         let mut logger = server_log.lock().unwrap();
         logger.log(m);
         true
       }
       Err(_) => {
-        println!(
+        //let peer = stream.peer_addr().expect("JFL");
+        println!("An error occurred while writing");
+        /*println!(
           "An error occurred while writing, terminating connection with {}",
-          stream.peer_addr().unwrap()
-        );
+          peer
+        );*/
         stream.shutdown().await.unwrap();
         false
       }
@@ -148,13 +245,16 @@ impl ConcurrentServer {
 
   pub async fn handle_client(server_log: &Arc<Mutex<Logger>>, mut stream: TcpStream, debug: bool) {
     let mut buf: Vec<u8> = vec![0; 1024];
+    let reply = String::from("YOYOYO");
     let handshake_success: bool = Self::verify_client_handshake(&mut stream).await;
     if handshake_success {
+      Self::write_message(server_log, &reply, &mut stream).await;
       while Self::read_message(server_log, &mut buf, &mut stream, debug).await {
-        if !Self::write_message(server_log, &mut buf, &mut stream).await {
+        if !Self::write_message(server_log, &reply, &mut stream).await {
           break;
         }
       }
+      
     } else {
       if debug {
         println!("Invalid client handshake");
@@ -166,4 +266,6 @@ impl ConcurrentServer {
     let logger = server_log.lock().unwrap();
     logger.print_log();
   }
+
+  
 }
