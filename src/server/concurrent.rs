@@ -1,14 +1,12 @@
-use crate::server::server::WEBSOCKET_PREFIX;
 use crate::utils::logging::*;
-use crate::utils::utils::Opts;
-use base64::engine::general_purpose;
-use base64::Engine;
-use sha1::Digest;
+use crate::utils::utils::{sec_websocket_key, Opts};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::vec;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+
 pub struct ConcurrentServer {
   ip: String,
   port: u16,
@@ -54,32 +52,43 @@ impl ConcurrentServer {
     }
   }
 
-  /*fn verify_structure(std::vec::Vec<&str>& lines) -> bool {
-      // first line must be GET {} HTTP/1.1
-      // you should be able to split each line by ": "
-      // if you do that you have a pair of strings where the first is the key and the latter is the value
-      // You want to see that Host, Upgrade, Connection, Sec-WebSocket-Key, Origin, Sec-WebSocket-Version are
-      // all present and each only once
-      // Upgrade: websocket, Connection: Upgrade, Sec-WebSocket-Version: 13
-      let first_line: Vec<&str> = lines[0].split(" ").collect();
-  }*/
-
-  pub async fn verify_client_handshake(stream: &mut TcpStream) -> bool {
+  async fn verify_client_handshake(stream: &mut TcpStream) -> bool {
     let mut buf = [0; 1024];
     let size = stream.read(&mut buf).await.unwrap();
     let request = String::from_utf8_lossy(&buf[..size]);
     let lines: std::vec::Vec<&str> = request.split('\n').collect();
-    let key: std::vec::Vec<&str> = lines[4].split(" ").collect();
-    let combined = key[1].to_owned() + WEBSOCKET_PREFIX;
-    let mut sha1 = sha1::Sha1::new();
-    sha1.update(combined);
-    let hash = sha1.finalize();
-    let my_key: String = general_purpose::STANDARD.encode(&hash[..]);
+    let first_line: vec::Vec<&str> = lines[0].split(' ').collect();
+    let last_word = format!(r"{}", first_line[2]);
+    if first_line.len() != 3
+      || first_line[0] != "GET"
+      || !first_line[1].starts_with('/')
+      || last_word.trim() != r"HTTP/1.1"
+    {
+      return false;
+    }
+    let mut m: HashMap<String, String> = HashMap::new();
+    for line in lines[1..].iter() {
+      let split_line: Vec<&str> = (line.to_owned()).split(": ").collect();
+      if split_line.len() == 2 {
+        m.insert(String::from(split_line[0]), String::from(split_line[1]));
+      }
+    }
+    let host = m.get("Host").unwrap().to_owned();
+    let upgrade = m.get("Upgrade").unwrap().to_owned();
+    let connection = m.get("Connection").unwrap().to_owned();
+    let key = m.get("Sec-WebSocket-Key").unwrap().to_owned();
+    let version = m.get("Sec-WebSocket-Version").unwrap().to_owned();
+    let origin = m.get("Origin").unwrap().to_owned();
+
+    if upgrade.trim() != "websocket" || connection.trim() != "Upgrade" || version.trim() != "13" {
+      return false;
+    }
+    let my_key = sec_websocket_key(key);
     let response: String = format!(
       "HTTP/1.1 101 Switching Protocols\n\
-            Upgrade: websocket\n\
-            Connection: Upgrade\n\
-            Sec-WebSocket-Accept: {}",
+      Upgrade: websocket\n\
+      Connection: Upgrade\n\
+      Sec-WebSocket-Accept: {}",
       my_key
     );
     stream.write(response.as_bytes()).await.unwrap();
@@ -92,17 +101,24 @@ impl ConcurrentServer {
     stream: &mut TcpStream,
     debug: bool,
   ) -> bool {
-    let size = stream.read(buf).await.unwrap();
-    if size == 0 {
-      if debug {
-        println!("size is 0");
+    match stream.read(buf).await {
+      Ok(size) => {
+        if size == 0 {
+          if debug {
+            println!("size is 0");
+          }
+          return false;
+        }
+        let msg: String = format!("Server Read: {}", String::from_utf8_lossy(&buf[..]));
+        let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
+        let mut logger = server_log.lock().unwrap();
+        logger.log(m);
       }
-      return false;
+      Err(err) => {
+        println!("{}", err);
+        return false;
+      }
     }
-    let msg: String = format!("Server Read: {}", String::from_utf8_lossy(&buf[..]));
-    let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
-    let mut logger = server_log.lock().unwrap();
-    logger.log(m);
     true
   }
 
