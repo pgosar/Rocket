@@ -18,6 +18,7 @@ pub struct ClientSocket {
   stream: Option<Arc<TcpStream>>,
   reader_thread: Option<JoinHandle<()>>,
   sender: Option<Sender<()>>,
+  mask_key: Vec<u8>,
   debug: bool,
 }
 
@@ -26,6 +27,83 @@ fn generate_key() -> String {
   let bytes: String = (0..16).map(|_| rand::random::<u8>() as char).collect();
   general_purpose::STANDARD.encode(&bytes)
 }
+
+fn pack_message_frame(payload: String, masking_key: &Vec<u8>) -> Vec<u8> {
+  // FIN = 1 (only frame in message), RSV1-3 = 0, opcode = 0001 (text frame)
+  let mut frame: Vec<u8> = vec![0b10000001]; 
+  frame.reserve(1024);
+
+  let mut second_byte: u8 = 128; // set mask bit
+  let strlen = payload.len() as u64;
+  let mut len_bytes = 0;
+  if strlen > 65535 { // 8 byte payload len
+    second_byte += 127;
+    len_bytes = 8;
+  } else if strlen > 125 { // 2 byte payload len
+    second_byte += 126;
+    len_bytes = 2;
+  } else {
+    second_byte += (strlen) as u8;
+  }
+  frame.push(second_byte);
+
+  if len_bytes == 8 {
+    let bytes = u64::to_be_bytes(strlen);
+    frame.extend_from_slice(&bytes);
+  } else if len_bytes == 2 {
+    let bytes = u16::to_be_bytes(strlen as u16);
+    frame.extend_from_slice(&bytes);
+  }
+  frame.extend_from_slice(&masking_key);
+  let payload_start = frame.len();
+  frame.extend_from_slice(payload.as_bytes());
+  for i in 0..(strlen as usize) {
+    frame[i + payload_start] ^= masking_key[i % 4]; 
+  }
+  frame
+}
+
+fn unpack_server_frame(buf: &mut Vec<u8>) -> Option<String> {
+  let first_byte = buf[0];
+  let fin: bool = (first_byte & 128) >> 7 == 1;
+  if !fin { // change
+    return None;
+  }
+  let rsv: u8 = first_byte & 0b01110000;
+  if rsv != 0 {
+    return None;
+  }
+  let opcode: u8 = first_byte & 15;
+  if opcode != 1 { // text frame, change this later
+    println!("opcode {}", opcode);
+    return None;
+  }
+
+  let second_byte = buf[1];
+  let mask: bool = (second_byte & 128) >> 7 == 1;
+  if mask { // servers must not mask stuff
+    return None;
+  }
+  let second_byte_payload_len = second_byte & 127;
+  let mut payload_len: usize = second_byte_payload_len as usize;
+  let mut payload_len_bytes: usize = 0;
+  if second_byte_payload_len == 127 {
+    payload_len_bytes = 8;
+    payload_len = u64::from_be_bytes(buf[2..10].try_into().unwrap()) as usize;
+  } else if second_byte_payload_len == 126 {
+    payload_len_bytes = 2;
+    payload_len = u16::from_be_bytes(buf[2..4].try_into().unwrap()) as usize;
+  }
+
+  let payload_start = payload_len_bytes + 2;
+  
+  let payload = &mut buf[payload_start..payload_start+payload_len];
+  let s = (*String::from_utf8_lossy(payload)).to_string();
+
+  Some(s)
+}
+
+
 
 impl ClientSocket {
   pub async fn new(uri: String, debug: bool) -> ClientSocket {
@@ -48,6 +126,7 @@ impl ClientSocket {
       stream: None,
       reader_thread: None,
       sender: None,
+      mask_key: vec![0;4],
       debug,
     }
   }
@@ -59,13 +138,13 @@ impl ClientSocket {
     let my_addr: std::net::SocketAddr = stream.local_addr().unwrap();
     let my_key: String = generate_key();
     let handshake = format!(
-      "GET {} HTTP/1.1\n\
-      Host: {}:{}\n\
-      Upgrade: websocket\n\
-      Connection: Upgrade\n\
-      Sec-WebSocket-Key: {}\n\
-      Origin: {}:{}\n\
-      Sec-WebSocket-Version: 13",
+      "GET {} HTTP/1.1\r\n\
+      Host: {}:{}]\r\n\
+      Upgrade: websocket\r\n\
+      Connection: Upgrade\r\n\
+      Sec-WebSocket-Key: {}\r\n\
+      Origin: {}:{}\r\n\
+      Sec-WebSocket-Version: 13\r\n\r\n",
       self.server_path,
       self.server_uri,
       self.server_port,
@@ -150,7 +229,7 @@ impl ClientSocket {
         Ok(_) | Err(TryRecvError::Disconnected) => match stream.read(&mut buf).await {
           Ok(_) => {
             if debug {
-              println!("Client Received: {}", from_utf8(&buf).unwrap());
+              println!("Client Received: {}", unpack_server_frame(&mut buf).unwrap());
             }
           }
           Err(e) => {
@@ -170,9 +249,9 @@ impl ClientSocket {
   }
 
   pub async fn write_message(&mut self, msg: String) {
-    let byte_msg = msg.as_bytes();
+    let byte_msg = pack_message_frame(msg.clone(), &self.mask_key);
     let stream = Arc::get_mut(self.stream.as_mut().unwrap()).unwrap();
-    match stream.write(byte_msg).await {
+    match stream.write(&byte_msg).await {
       Ok(_) => {
         if self.debug {
           println!("Client Sent: {}", msg);
@@ -209,6 +288,9 @@ impl ClientSocket {
           self.reader_thread = Some(tokio::spawn(async move {
             Self::reader_loop(&mut stream_clone, &mut recv_clone, debug).await
           }));
+          for i in 0..4 {
+            self.mask_key[i] = rand::random::<u8>()
+          }
         }
       }
       Err(e) => {

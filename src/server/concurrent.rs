@@ -22,7 +22,7 @@ async fn create_listener(ip: String, port: u16) -> TcpListener {
   listener
 }
 
-pub fn pack_message_frame(payload: String) -> Vec<u8> {
+fn pack_message_frame(payload: String) -> Vec<u8> {
   // FIN = 1 (only frame in message), RSV1-3 = 0, opcode = 0001 (text frame)
   let mut frame: Vec<u8> = vec![0b10000001]; 
   frame.reserve(1024);
@@ -56,27 +56,26 @@ pub fn pack_message_frame(payload: String) -> Vec<u8> {
   frame
 }
 
-fn unpack_client_frame(buf: &mut Vec<u8>) -> Option<String> {
-  println!("in the client frame");
+fn unpack_client_frame(buf: &mut Vec<u8>) -> (Option<u8>, Option<String>) {
   let first_byte = buf[0];
   let fin: bool = (first_byte & 128) >> 7 == 1;
   if !fin { // change
-    return None;
+    return (None, None);
   }
   let rsv: u8 = first_byte & 0b01110000;
   if rsv != 0 {
-    return None;
+    return (None, None);
   }
   let opcode: u8 = first_byte & 15;
   if opcode != 1 { // text frame, change this later
     println!("opcode {}", opcode);
-    return None;
+    return (Some(opcode), None);
   }
 
   let second_byte = buf[1];
   let mask: bool = (second_byte & 128) >> 7 == 1;
   if !mask { // clients must mask stuff
-    return None;
+    return (None, None);
   }
   let second_byte_payload_len = second_byte & 127;
   let mut payload_len: usize = second_byte_payload_len as usize;
@@ -99,7 +98,7 @@ fn unpack_client_frame(buf: &mut Vec<u8>) -> Option<String> {
   }
   let s = (*String::from_utf8_lossy(payload)).to_string();
 
-  Some(s)
+  (Some(opcode), Some(s))
 }
 
 impl ConcurrentServer {
@@ -183,37 +182,46 @@ impl ConcurrentServer {
     buf: &mut Vec<u8>,
     stream: &mut TcpStream,
     debug: bool,
-  ) -> bool {
+  ) -> (Option<u8>, Option<String>) {
     match stream.read(buf).await {
       Ok(size) => {
         if size == 0 {
           if debug {
             println!("size is 0");
           }
-          return false;
+          return (None, None);
         }
 
-        let msg = unpack_client_frame(buf);
-        match msg {
+        let (opcode, payload) = unpack_client_frame(buf);
+        match opcode {
           None => {
-            return false;
+            return (None, None);
           }
-          Some(payload) => {
-            let log_msg: String = format!("Server Read: {}", &payload);
-            let m: Message = Message::new(log_msg.clone(), ErrorLevel::INFO);
-            let mut logger = server_log.lock().unwrap();
-            logger.log(m);
+          Some(opcode_val) => {
+            if opcode_val == 1 {
+              match payload {
+                None => {
+                  return (opcode, payload);
+                }
+                Some(msg) => {
+                  let log_msg: String = format!("Server Read: {}", &msg);
+                  let m: Message = Message::new(log_msg.clone(), ErrorLevel::INFO);
+                  let mut logger = server_log.lock().unwrap();
+                  logger.log(m);
+                  return (opcode, Some(msg));
+                }
+              }
+            } else {
+              return (opcode, payload);
+            }
           }
-        }
-
-        
+        }        
       }
       Err(err) => {
         println!("{}", err);
-        return false;
+        return (None, None);
       }
     }
-    true
   }
 
   pub async fn write_message(
@@ -231,12 +239,7 @@ impl ConcurrentServer {
         true
       }
       Err(_) => {
-        //let peer = stream.peer_addr().expect("JFL");
-        println!("An error occurred while writing");
-        /*println!(
-          "An error occurred while writing, terminating connection with {}",
-          peer
-        );*/
+        println!("An error occurred while writing, terminating connection");
         stream.shutdown().await.unwrap();
         false
       }
@@ -248,13 +251,20 @@ impl ConcurrentServer {
     let reply = String::from("YOYOYO");
     let handshake_success: bool = Self::verify_client_handshake(&mut stream).await;
     if handshake_success {
-      Self::write_message(server_log, &reply, &mut stream).await;
-      while Self::read_message(server_log, &mut buf, &mut stream, debug).await {
-        if !Self::write_message(server_log, &reply, &mut stream).await {
+      loop {
+        let (opcode, data) = Self::read_message(server_log, &mut buf, &mut stream, debug).await;
+        if opcode.is_none() {
           break;
         }
+        let opcode_val = opcode.unwrap();
+        if opcode_val == 8 || data.is_none() {
+          break;
+        } else {
+          if !Self::write_message(server_log, &reply, &mut stream).await {
+            break;
+          }
+        }
       }
-      
     } else {
       if debug {
         println!("Invalid client handshake");
