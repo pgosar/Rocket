@@ -1,15 +1,15 @@
 use crate::utils::utils::*;
 use base64::{engine::general_purpose, Engine};
+use pollster::block_on;
 use std::collections::HashMap;
 use std::str::from_utf8;
+use std::sync::{Arc, Mutex};
 use std::vec::Vec;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, Result};
+use tokio::net::TcpStream;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
-
-use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 
 pub struct ClientSocket {
   server_uri: String,
@@ -19,6 +19,7 @@ pub struct ClientSocket {
   reader_thread: Option<JoinHandle<()>>,
   sender: Option<Sender<()>>,
   debug: bool,
+  seq: bool,
 }
 
 fn generate_key() -> String {
@@ -28,7 +29,7 @@ fn generate_key() -> String {
 }
 
 impl ClientSocket {
-  pub async fn new(uri: String, debug: bool) -> ClientSocket {
+  pub async fn new(uri: String, debug: bool, seq: bool) -> ClientSocket {
     let split_uri: std::vec::Vec<&str> = uri.split(':').collect();
     let port_path = String::from(split_uri[1]);
     let port_path_vec: Vec<&str> = port_path.split('/').collect();
@@ -49,7 +50,56 @@ impl ClientSocket {
       reader_thread: None,
       sender: None,
       debug,
+      seq,
     }
+  }
+
+  async fn process_request(&self, buf: &Vec<u8>, my_key: String) -> Result<bool> {
+    let request = String::from_utf8_lossy(&buf);
+    let lines: Vec<&str> = request.split('\n').collect();
+
+    if lines[0] != "HTTP/1.1 101 Switching Protocol" {
+      return Ok(false);
+    }
+
+    let mut m: HashMap<String, Option<String>> = HashMap::from([
+      (String::from("Upgrade"), None),
+      (String::from("Connection"), None),
+      (String::from("Sec-WebSocket-Accept"), None),
+    ]);
+
+    for line in lines[1..].iter() {
+      let split_line: Vec<&str> = (*line).split(": ").collect();
+      if split_line.len() != 2 {
+        return Ok(false);
+      }
+
+      let mut old = m.get(split_line[0]);
+      if old.is_none() || old.take().is_some() {
+        // each correct key should exist once and only once
+        return Ok(false);
+      }
+
+      m.insert(
+        String::from(split_line[0]),
+        Some(String::from(split_line[1])),
+      );
+    }
+
+    let upgrade = m.get("Upgrade").to_owned().unwrap().to_owned().unwrap();
+    let connection = m.get("Connection").to_owned().unwrap().to_owned().unwrap();
+    let swk = m
+      .get("Sec-WebSocket-Accept")
+      .to_owned()
+      .unwrap()
+      .to_owned()
+      .unwrap();
+
+    if upgrade != "websocket" || connection != "Upgrade" || swk != sec_websocket_key(my_key) {
+      return Ok(false);
+    }
+
+    Ok(true)
   }
 
   async fn handshake_http(&mut self) -> bool {
@@ -73,61 +123,63 @@ impl ClientSocket {
       my_addr.ip().to_string(),
       my_addr.port().to_string(),
     );
-    match stream.write(handshake.as_bytes()).await {
-      Ok(_) => {}
-      Err(e) => {
-        println!("Failed to send handshake: {}", e);
-        return false;
+    if self.seq {
+      match block_on(async { stream.write(handshake.as_bytes()).await }) {
+        Ok(_) => {}
+        Err(e) => {
+          println!("Failed to send handshake: {}", e);
+          return false;
+        }
+      }
+    } else {
+      match stream.write(handshake.as_bytes()).await {
+        Ok(_) => {}
+        Err(e) => {
+          println!("Failed to send handshake: {}", e);
+          return false;
+        }
       }
     }
-    stream
-      .write(handshake.as_bytes())
-      .await
-      .expect("write failed");
-    match stream.read(&mut buf).await {
-      Ok(size) => {
-        let request = String::from_utf8_lossy(&buf[..size]);
-        let lines: Vec<&str> = request.split('\n').collect();
-        if lines[0] != "HTTP/1.1 101 Switching Protocol" {
-          return false;
+    if self.seq {
+      block_on(async {
+        stream
+          .write(handshake.as_bytes())
+          .await
+          .expect("write failed")
+      });
+    } else {
+      stream
+        .write(handshake.as_bytes())
+        .await
+        .expect("write failed");
+    }
+    if self.seq {
+      match block_on(async { stream.read(&mut buf).await }) {
+        Ok(size) => {
+          block_on(async { self.process_request(&buf[0..size].to_vec(), my_key).await })
+            .expect("process request failed");
         }
-        let mut m: HashMap<String, Option<String>> = HashMap::from([
-          (String::from("Upgrade"), None),
-          (String::from("Connection"), None),
-          (String::from("Sec-WebSocket-Accept"), None),
-        ]);
-        for line in lines[1..].iter() {
-          let split_line: Vec<&str> = (*line).split(": ").collect();
-          if split_line.len() != 2 {
-            return false;
+        Err(e) => {
+          if self.debug {
+            println!("Failed to receive data: {}", e);
           }
-          let mut old = m.get(split_line[0]);
-          if old.is_none() || old.take().is_some() {
-            // each correct key should exist once and only once
-            return false;
-          }
-          m.insert(
-            String::from(split_line[0]),
-            Some(String::from(split_line[1])),
-          );
-        }
-        let upgrade = m.get("Upgrade").to_owned().unwrap().to_owned().unwrap();
-        let connection = m.get("Connection").to_owned().unwrap().to_owned().unwrap();
-        let swk = m
-          .get("Sec-WebSocket-Accept")
-          .to_owned()
-          .unwrap()
-          .to_owned()
-          .unwrap();
-        if upgrade != "websocket" || connection != "Upgrade" || swk != sec_websocket_key(my_key) {
           return false;
         }
       }
-      Err(e) => {
-        if self.debug {
-          println!("Failed to receive data: {}", e);
+    } else {
+      match stream.read(&mut buf).await {
+        Ok(size) => {
+          self
+            .process_request(&buf[0..size].to_vec(), my_key)
+            .await
+            .expect("process request failed");
         }
-        return false;
+        Err(e) => {
+          if self.debug {
+            println!("Failed to receive data: {}", e);
+          }
+          return false;
+        }
       }
     }
     if self.debug {
@@ -169,18 +221,33 @@ impl ClientSocket {
     }
   }
 
-  pub async fn write_message(&mut self, msg: String) {
+  pub async fn write_message(&mut self, msg: String, seq: bool) {
     let byte_msg = msg.as_bytes();
     let stream = Arc::get_mut(self.stream.as_mut().unwrap()).unwrap();
-    match stream.write(byte_msg).await {
-      Ok(_) => {
-        if self.debug {
-          println!("Client Sent: {}", msg);
+    if seq {
+      match block_on(async { stream.write(byte_msg).await }) {
+        Ok(_) => {
+          if self.debug {
+            println!("Client Sent: {}", msg);
+          }
+        }
+        Err(err) => {
+          if self.debug {
+            println!("Error writing from client: {}", err);
+          }
         }
       }
-      Err(err) => {
-        if self.debug {
-          println!("Error writing from client: {}", err);
+    } else {
+      match stream.write(byte_msg).await {
+        Ok(_) => {
+          if self.debug {
+            println!("Client Sent: {}", msg);
+          }
+        }
+        Err(err) => {
+          if self.debug {
+            println!("Error writing from client: {}", err);
+          }
         }
       }
     }
@@ -206,9 +273,18 @@ impl ClientSocket {
           let debug = self.debug;
           let mut stream_clone = Arc::clone(self.stream.as_mut().unwrap());
           let mut recv_clone = Arc::new(Mutex::new(rx));
-          self.reader_thread = Some(tokio::spawn(async move {
-            Self::reader_loop(&mut stream_clone, &mut recv_clone, debug).await
-          }));
+
+          if self.seq {
+            block_on(async move {
+              self.reader_thread = Some(tokio::spawn(async move {
+                Self::reader_loop(&mut stream_clone, &mut recv_clone, debug).await
+              }));
+            });
+          } else {
+            self.reader_thread = Some(tokio::spawn(async move {
+              Self::reader_loop(&mut stream_clone, &mut recv_clone, debug).await
+            }));
+          }
         }
       }
       Err(e) => {
@@ -223,14 +299,18 @@ impl ClientSocket {
     if let Some(tx) = self.sender.take() {
       tx.send(()).await.unwrap();
       if let Some(jh) = self.reader_thread.take() {
-        jh.await.unwrap();
+        if self.seq {
+          block_on(jh).expect("Failed to join reader thread")
+        } else {
+          jh.await.unwrap();
+        }
       }
     }
-    Arc::get_mut(self.stream.as_mut().unwrap())
-      .expect("Stream not instantiated")
-      .shutdown()
-      .await
-      .unwrap();
+    let stream = Arc::get_mut(self.stream.as_mut().unwrap()).expect("Stream not instantiated");
+    if self.seq {
+      block_on(stream.shutdown()).expect("Failed to shutdown stream")
+    } else {
+      stream.shutdown().await.unwrap();
+    }
   }
 }
-
