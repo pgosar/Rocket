@@ -220,64 +220,67 @@ impl ClientSocket {
 
   async fn reader_loop(
     stream: &mut OwnedReadHalf,
-    receiver: &mut Arc<Mutex<Receiver<()>>>,
+    //receiver: &mut Arc<Mutex<Receiver<()>>>,
     debug: bool,
   ) {
     println!("beginning of reader loop");
     //let stream = Arc::get_mut(arc_stream).unwrap();
     let mut buf = vec![0; 1024];
     //stream.set_read_timeout(Some(Duration::new(1, 0))).unwrap();
-    let rcv = Arc::get_mut(receiver).unwrap().get_mut().unwrap();
+    //let rcv = Arc::get_mut(receiver).unwrap().get_mut().unwrap();
     loop {
-      match rcv.try_recv() {
-        Ok(_) | Err(TryRecvError::Disconnected) => match stream.read(&mut buf).await {
-          Ok(size) => {
-            if size == 0 {
-              if debug {
-                println!("size is 0");
-              }
+      //match rcv.try_recv() {
+        //Ok(_) | Err(TryRecvError::Disconnected) => 
+      match stream.read(&mut buf).await {
+        Ok(size) => {
+          if size == 0 {
+            if debug {
+              println!("size is 0");
+            }
+            break;
+          }
+          let (opcode, payload) = unpack_server_frame(&mut buf);
+          match opcode {
+            None => {
               break;
             }
-            let (opcode, payload) = unpack_server_frame(&mut buf);
-            match opcode {
-              None => {
+            Some(opcode_val) => {
+              if opcode_val == 8 {
+                // send a closing frame too if you have not already sent one
+                if (debug) {
+                  println!("received closing frame");
+                }
                 break;
-              }
-              Some(opcode_val) => {
-                println!("opcode {}", opcode_val);
-                if opcode_val == 8 {
-                  // send a closing frame too if you have not already sent one
-                  break;
 
-                } else if opcode_val == 1 {
-                  match payload {
-                    None => {}
-                    Some(msg) => {
-                      if debug {
-                        println!("Client Received: {}", &msg);
-                      }
+              } else if opcode_val == 1 {
+                match payload {
+                  None => {}
+                  Some(msg) => {
+                    if debug {
+                      println!("Client Received: {}", &msg);
                     }
                   }
-                } else { // handle pings and pongs
-                  break;
                 }
+              } else { // handle pings and pongs
+                break;
               }
             }
           }
-          Err(e) => {
-            if debug {
-              println!("Failed to receive data: {}", e);
-            }
-            break;
-          }
-        },
-        Err(TryRecvError::Empty) => {
+        }
+        Err(e) => {
           if debug {
-            println!("Empty");
-            break;
+            println!("Failed to receive data: {}", e);
           }
+          break;
         }
       }
+        //Err(TryRecvError::Empty) => {
+          //if debug {
+           // println!("Empty");
+           // break;
+          //}
+        //}
+      //}
     }
     println!("end of reader loop");
   }
@@ -319,13 +322,13 @@ impl ClientSocket {
               self.server_port
             );
           }
-          let (tx, rx) = channel(8);
-          self.sender = Some(tx);
+          //let (tx, rx) = channel(8);
+          //self.sender = Some(tx);
           let debug = self.debug;
           //let mut stream_clone = Arc::clone(self.stream.as_mut().unwrap());
-          let mut recv_clone = Arc::new(Mutex::new(rx));
+          //let mut recv_clone = Arc::new(Mutex::new(rx));
           self.reader_thread = Some(tokio::spawn(async move {
-            Self::reader_loop(&mut read_half, &mut recv_clone, debug).await
+            Self::reader_loop(&mut read_half, /*&mut recv_clone,*/ debug).await
           }));
           for i in 0..4 {
             self.mask_key[i] = rand::random::<u8>()
@@ -344,13 +347,35 @@ impl ClientSocket {
     }
   }
 
-  pub async fn disconnect(&mut self) {
-    if let Some(tx) = self.sender.take() {
-      tx.send(()).await.unwrap();
-      if let Some(jh) = self.reader_thread.take() {
-        jh.await.unwrap();
+  async fn send_control_frame(&mut self, opcode: u8) {
+    if !self.connected {
+      panic!("Client not connected");
+    }
+
+    let byte_msg: Vec<u8> = vec![0b10000000 + opcode]; 
+    let stream = self.stream.as_mut().unwrap();
+    match stream.write(&byte_msg).await {
+      Ok(_) => {
+        if self.debug {
+          println!("Client Sent opcode {} ", opcode);
+        }
+      }
+      Err(err) => {
+        if self.debug {
+          println!("Failed to send client control frame of code {}", opcode);
+        }
       }
     }
+  }
+
+  pub async fn disconnect(&mut self) {
+   // if let Some(tx) = self.sender.take() {
+      //tx.send(()).await.unwrap();
+    self.send_control_frame(8).await;
+    if let Some(jh) = self.reader_thread.take() {
+      jh.await.unwrap();
+    }
+    //}
     self.stream.as_mut()
       .expect("Stream not instantiated")
       .shutdown()

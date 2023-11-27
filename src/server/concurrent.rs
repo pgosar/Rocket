@@ -186,7 +186,7 @@ impl ConcurrentServer {
       Ok(size) => {
         if size == 0 {
           if debug {
-            println!("size is 0");
+            println!("server: size is 0");
           }
           return (None, None);
         }
@@ -245,6 +245,22 @@ impl ConcurrentServer {
     }
   }
 
+  async fn send_control_frame(stream: &mut TcpStream, opcode: u8, debug: bool) {
+    let byte_msg: Vec<u8> = vec![0b10000000 + opcode]; 
+    match stream.write(&byte_msg).await {
+      Ok(_) => {
+        if debug {
+          println!("Server sent opcode {} ", opcode);
+        }
+      }
+      Err(err) => {
+        if debug {
+          println!("Failed to send server control frame of code {}", opcode);
+        }
+      }
+    }
+  }
+
   pub async fn handle_client(server_log: &Arc<Mutex<Logger>>, mut stream: TcpStream, debug: bool) {
     let mut buf: Vec<u8> = vec![0; 1024];
     let reply = String::from("YOYOYO");
@@ -256,7 +272,11 @@ impl ConcurrentServer {
           break;
         }
         let opcode_val = opcode.unwrap();
-        if opcode_val == 8 || data.is_none() {
+        if opcode_val == 8 {
+          if (debug) {
+            println!("Server received opcode 8");
+          }
+          Self::send_control_frame(&mut stream, opcode_val, debug).await;
           break;
         } else {
           if !Self::write_message(server_log, &reply, &mut stream).await {
