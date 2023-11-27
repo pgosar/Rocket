@@ -10,15 +10,17 @@ use tokio::task::JoinHandle;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
 pub struct ClientSocket {
   server_uri: String,
   server_port: u16,
   server_path: String,
-  stream: Option<Arc<TcpStream>>,
+  stream: Option<OwnedWriteHalf>,
   reader_thread: Option<JoinHandle<()>>,
   sender: Option<Sender<()>>,
   mask_key: Vec<u8>,
+  connected: bool,
   debug: bool,
 }
 
@@ -63,26 +65,25 @@ fn pack_message_frame(payload: String, masking_key: &Vec<u8>) -> Vec<u8> {
   frame
 }
 
-fn unpack_server_frame(buf: &mut Vec<u8>) -> Option<String> {
+fn unpack_server_frame(buf: &mut Vec<u8>) ->(Option<u8>, Option<String>) {
   let first_byte = buf[0];
   let fin: bool = (first_byte & 128) >> 7 == 1;
   if !fin { // change
-    return None;
+    return (None, None);
   }
   let rsv: u8 = first_byte & 0b01110000;
   if rsv != 0 {
-    return None;
+    return (None, None);
   }
   let opcode: u8 = first_byte & 15;
   if opcode != 1 { // text frame, change this later
-    println!("opcode {}", opcode);
-    return None;
+    return (Some(opcode), None);
   }
 
   let second_byte = buf[1];
   let mask: bool = (second_byte & 128) >> 7 == 1;
   if mask { // servers must not mask stuff
-    return None;
+    return (None, None);
   }
   let second_byte_payload_len = second_byte & 127;
   let mut payload_len: usize = second_byte_payload_len as usize;
@@ -100,7 +101,7 @@ fn unpack_server_frame(buf: &mut Vec<u8>) -> Option<String> {
   let payload = &mut buf[payload_start..payload_start+payload_len];
   let s = (*String::from_utf8_lossy(payload)).to_string();
 
-  Some(s)
+  (Some(opcode), Some(s))
 }
 
 
@@ -128,14 +129,14 @@ impl ClientSocket {
       sender: None,
       mask_key: vec![0;4],
       debug,
+      connected: false,
     }
   }
 
-  async fn handshake_http(&mut self) -> bool {
+  async fn handshake_http(&mut self, read_half: &mut OwnedReadHalf, write_half: &mut OwnedWriteHalf) -> bool {
     //dGhlIHNhbXBsZSBub25jZQ==
     let mut buf = vec![0; 1024];
-    let stream = Arc::get_mut(self.stream.as_mut().unwrap()).unwrap();
-    let my_addr: std::net::SocketAddr = stream.local_addr().unwrap();
+    let my_addr: std::net::SocketAddr = read_half.local_addr().unwrap();
     let my_key: String = generate_key();
     let handshake = format!(
       "GET {} HTTP/1.1\r\n\
@@ -152,22 +153,22 @@ impl ClientSocket {
       my_addr.ip().to_string(),
       my_addr.port().to_string(),
     );
-    match stream.write(handshake.as_bytes()).await {
+    match write_half.write(handshake.as_bytes()).await {
       Ok(_) => {}
       Err(e) => {
         println!("Failed to send handshake: {}", e);
         return false;
       }
     }
-    stream
+    /*stream
       .write(handshake.as_bytes())
       .await
-      .expect("write failed");
-    match stream.read(&mut buf).await {
+      .expect("write failed");*/
+    match read_half.read(&mut buf).await {
       Ok(size) => {
         let request = String::from_utf8_lossy(&buf[..size]);
-        let lines: Vec<&str> = request.split('\n').collect();
-        if lines[0] != "HTTP/1.1 101 Switching Protocol" {
+        let lines: Vec<&str> = request.trim().split("\r\n").collect();
+        if lines[0].trim() != "HTTP/1.1 101 Switching Protocols" {
           return false;
         }
         let mut m: HashMap<String, Option<String>> = HashMap::from([
@@ -176,13 +177,14 @@ impl ClientSocket {
           (String::from("Sec-WebSocket-Accept"), None),
         ]);
         for line in lines[1..].iter() {
-          let split_line: Vec<&str> = (*line).split(": ").collect();
+          let split_line: Vec<&str> = (*line).trim().split(": ").collect();
           if split_line.len() != 2 {
             return false;
           }
           let mut old = m.get(split_line[0]);
-          if old.is_none() || old.take().is_some() {
+          if old.is_none() /*|| old.take().is_some()*/ {
             // each correct key should exist once and only once
+            //println!("invalid key {} {} {}", split_line[0], old.is_none(), val);
             return false;
           }
           m.insert(
@@ -198,7 +200,8 @@ impl ClientSocket {
           .unwrap()
           .to_owned()
           .unwrap();
-        if upgrade != "websocket" || connection != "Upgrade" || swk != sec_websocket_key(my_key) {
+        let expected_key = sec_websocket_key(my_key);
+        if upgrade != "websocket" || connection != "Upgrade" || swk != expected_key {
           return false;
         }
       }
@@ -216,20 +219,49 @@ impl ClientSocket {
   }
 
   async fn reader_loop(
-    arc_stream: &mut Arc<TcpStream>,
+    stream: &mut OwnedReadHalf,
     receiver: &mut Arc<Mutex<Receiver<()>>>,
     debug: bool,
   ) {
-    let stream = Arc::get_mut(arc_stream).unwrap();
+    println!("beginning of reader loop");
+    //let stream = Arc::get_mut(arc_stream).unwrap();
     let mut buf = vec![0; 1024];
     //stream.set_read_timeout(Some(Duration::new(1, 0))).unwrap();
     let rcv = Arc::get_mut(receiver).unwrap().get_mut().unwrap();
     loop {
       match rcv.try_recv() {
         Ok(_) | Err(TryRecvError::Disconnected) => match stream.read(&mut buf).await {
-          Ok(_) => {
-            if debug {
-              println!("Client Received: {}", unpack_server_frame(&mut buf).unwrap());
+          Ok(size) => {
+            if size == 0 {
+              if debug {
+                println!("size is 0");
+              }
+              break;
+            }
+            let (opcode, payload) = unpack_server_frame(&mut buf);
+            match opcode {
+              None => {
+                break;
+              }
+              Some(opcode_val) => {
+                println!("opcode {}", opcode_val);
+                if opcode_val == 8 {
+                  // send a closing frame too if you have not already sent one
+                  break;
+
+                } else if opcode_val == 1 {
+                  match payload {
+                    None => {}
+                    Some(msg) => {
+                      if debug {
+                        println!("Client Received: {}", &msg);
+                      }
+                    }
+                  }
+                } else { // handle pings and pongs
+                  break;
+                }
+              }
             }
           }
           Err(e) => {
@@ -242,15 +274,20 @@ impl ClientSocket {
         Err(TryRecvError::Empty) => {
           if debug {
             println!("Empty");
+            break;
           }
         }
       }
     }
+    println!("end of reader loop");
   }
 
   pub async fn write_message(&mut self, msg: String) {
+    if !self.connected {
+      panic!("Client not connected");
+    }
     let byte_msg = pack_message_frame(msg.clone(), &self.mask_key);
-    let stream = Arc::get_mut(self.stream.as_mut().unwrap()).unwrap();
+    let stream = self.stream.as_mut().unwrap();
     match stream.write(&byte_msg).await {
       Ok(_) => {
         if self.debug {
@@ -272,8 +309,10 @@ impl ClientSocket {
     }
     match TcpStream::connect(address).await {
       Ok(stream) => {
-        self.stream = Some(Arc::new(stream));
-        if self.handshake_http().await {
+        let (mut read_half, mut write_half) = stream.into_split();
+        self.connected = self.handshake_http(&mut read_half, &mut write_half).await;
+        if self.connected {
+          self.stream = Some(write_half);
           if self.debug {
             println!(
               "Successfully connected to server in port {}",
@@ -283,13 +322,17 @@ impl ClientSocket {
           let (tx, rx) = channel(8);
           self.sender = Some(tx);
           let debug = self.debug;
-          let mut stream_clone = Arc::clone(self.stream.as_mut().unwrap());
+          //let mut stream_clone = Arc::clone(self.stream.as_mut().unwrap());
           let mut recv_clone = Arc::new(Mutex::new(rx));
           self.reader_thread = Some(tokio::spawn(async move {
-            Self::reader_loop(&mut stream_clone, &mut recv_clone, debug).await
+            Self::reader_loop(&mut read_half, &mut recv_clone, debug).await
           }));
           for i in 0..4 {
             self.mask_key[i] = rand::random::<u8>()
+          }
+        } else {
+          if self.debug {
+            println!("invalid server handshake");
           }
         }
       }
@@ -308,11 +351,13 @@ impl ClientSocket {
         jh.await.unwrap();
       }
     }
-    Arc::get_mut(self.stream.as_mut().unwrap())
+    self.stream.as_mut()
       .expect("Stream not instantiated")
       .shutdown()
       .await
       .unwrap();
+
+    println!("disconnecting client");
   }
 }
 

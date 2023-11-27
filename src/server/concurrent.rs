@@ -68,7 +68,6 @@ fn unpack_client_frame(buf: &mut Vec<u8>) -> (Option<u8>, Option<String>) {
   }
   let opcode: u8 = first_byte & 15;
   if opcode != 1 { // text frame, change this later
-    println!("opcode {}", opcode);
     return (Some(opcode), None);
   }
 
