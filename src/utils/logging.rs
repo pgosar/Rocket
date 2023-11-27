@@ -1,4 +1,7 @@
 use std::collections::VecDeque;
+use std::fs::File;
+use std::io::{self, Write};
+use std::path::Path;
 use std::time::SystemTime;
 
 pub enum ErrorLevel {
@@ -39,14 +42,17 @@ impl Logger {
     }
   }
 
-  pub fn print_log(&self) {
+  pub fn print_log(&self) -> io::Result<()> {
+    let log_file_path = Path::new("log.txt");
+    let mut log_file = File::create(log_file_path)?;
     for entry in &self.entries {
       match entry.error_level {
-        ErrorLevel::INFO => println!("[INFO] {}", entry.msg),
-        ErrorLevel::WARNING => println!("[WARNING] {}", entry.msg),
-        ErrorLevel::ERROR => println!("[ERROR] {}", entry.msg),
+        ErrorLevel::INFO => writeln!(log_file, "[INFO] {}", entry.msg)?,
+        ErrorLevel::WARNING => writeln!(log_file, "[WARNING] {}", entry.msg)?,
+        ErrorLevel::ERROR => writeln!(log_file, "[ERROR] {}", entry.msg)?,
       }
     }
+    Ok(())
   }
 
   pub fn log(&mut self, m: Message) {
