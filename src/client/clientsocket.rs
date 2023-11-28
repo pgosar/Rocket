@@ -1,13 +1,11 @@
 use crate::utils::utils::*;
 use base64::{engine::general_purpose, Engine};
 use std::collections::HashMap;
-use std::str::from_utf8;
 use std::vec::Vec;
-use tokio::sync::mpsc::error::TryRecvError;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -16,9 +14,8 @@ pub struct ClientSocket {
   server_uri: String,
   server_port: u16,
   server_path: String,
-  stream: Option<OwnedWriteHalf>,
+  write_stream: Option<Arc<Mutex<OwnedWriteHalf>>>,
   reader_thread: Option<JoinHandle<()>>,
-  sender: Option<Sender<()>>,
   mask_key: Vec<u8>,
   connected: bool,
   debug: bool,
@@ -124,9 +121,8 @@ impl ClientSocket {
       server_uri: server_uri.clone(),
       server_port,
       server_path: path,
-      stream: None,
+      write_stream: None,
       reader_thread: None,
-      sender: None,
       mask_key: vec![0;4],
       debug,
       connected: false,
@@ -181,7 +177,7 @@ impl ClientSocket {
           if split_line.len() != 2 {
             return false;
           }
-          let mut old = m.get(split_line[0]);
+          let old = m.get(split_line[0]);
           if old.is_none() /*|| old.take().is_some()*/ {
             // each correct key should exist once and only once
             //println!("invalid key {} {} {}", split_line[0], old.is_none(), val);
@@ -219,19 +215,14 @@ impl ClientSocket {
   }
 
   async fn reader_loop(
-    stream: &mut OwnedReadHalf,
-    //receiver: &mut Arc<Mutex<Receiver<()>>>,
+    read_stream: &mut OwnedReadHalf,
+    write_stream: &Arc<Mutex<OwnedWriteHalf>>,
     debug: bool,
   ) {
     println!("beginning of reader loop");
-    //let stream = Arc::get_mut(arc_stream).unwrap();
     let mut buf = vec![0; 1024];
-    //stream.set_read_timeout(Some(Duration::new(1, 0))).unwrap();
-    //let rcv = Arc::get_mut(receiver).unwrap().get_mut().unwrap();
-    loop {
-      //match rcv.try_recv() {
-        //Ok(_) | Err(TryRecvError::Disconnected) => 
-      match stream.read(&mut buf).await {
+    loop { 
+      match read_stream.read(&mut buf).await {
         Ok(size) => {
           if size == 0 {
             if debug {
@@ -245,14 +236,22 @@ impl ClientSocket {
               break;
             }
             Some(opcode_val) => {
-              if opcode_val == 8 {
+              if opcode_val == 0x8 {
                 // send a closing frame too if you have not already sent one
-                if (debug) {
-                  println!("received closing frame");
+                if debug {
+                  println!("Client received closing frame");
                 }
                 break;
 
-              } else if opcode_val == 1 {
+              } else if opcode_val == 0x9 { // ping, send pong
+                // send control frame of 0xA
+                Self::send_control_frame(write_stream, 0xA, debug).await;
+                if debug {
+                  println!("Client received ping");
+                }
+                
+              }
+              else if opcode_val == 0x1 {
                 match payload {
                   None => {}
                   Some(msg) => {
@@ -274,13 +273,6 @@ impl ClientSocket {
           break;
         }
       }
-        //Err(TryRecvError::Empty) => {
-          //if debug {
-           // println!("Empty");
-           // break;
-          //}
-        //}
-      //}
     }
     println!("end of reader loop");
   }
@@ -290,7 +282,7 @@ impl ClientSocket {
       panic!("Client not connected");
     }
     let byte_msg = pack_message_frame(msg.clone(), &self.mask_key);
-    let stream = self.stream.as_mut().unwrap();
+    let mut stream = self.write_stream.as_mut().unwrap().lock().await;    
     match stream.write(&byte_msg).await {
       Ok(_) => {
         if self.debug {
@@ -315,7 +307,7 @@ impl ClientSocket {
         let (mut read_half, mut write_half) = stream.into_split();
         self.connected = self.handshake_http(&mut read_half, &mut write_half).await;
         if self.connected {
-          self.stream = Some(write_half);
+          self.write_stream = Some(Arc::new(Mutex::new(write_half)));
           if self.debug {
             println!(
               "Successfully connected to server in port {}",
@@ -325,10 +317,11 @@ impl ClientSocket {
           //let (tx, rx) = channel(8);
           //self.sender = Some(tx);
           let debug = self.debug;
-          //let mut stream_clone = Arc::clone(self.stream.as_mut().unwrap());
+          //let mut stream_clone = Arc::clone(self.write_stream.as_mut().unwrap());
           //let mut recv_clone = Arc::new(Mutex::new(rx));
+          let stream_clone = Arc::clone(&self.write_stream.as_ref().unwrap());
           self.reader_thread = Some(tokio::spawn(async move {
-            Self::reader_loop(&mut read_half, /*&mut recv_clone,*/ debug).await
+            Self::reader_loop(&mut read_half, &stream_clone, debug).await
           }));
           for i in 0..4 {
             self.mask_key[i] = rand::random::<u8>()
@@ -347,21 +340,17 @@ impl ClientSocket {
     }
   }
 
-  async fn send_control_frame(&mut self, opcode: u8) {
-    if !self.connected {
-      panic!("Client not connected");
-    }
-
+  async fn send_control_frame(write_stream: &Arc<Mutex<OwnedWriteHalf>>, opcode: u8, debug: bool) {
     let byte_msg: Vec<u8> = vec![0b10000000 + opcode]; 
-    let stream = self.stream.as_mut().unwrap();
+    let mut stream = write_stream.lock().await;
     match stream.write(&byte_msg).await {
       Ok(_) => {
-        if self.debug {
+        if debug {
           println!("Client Sent opcode {} ", opcode);
         }
       }
-      Err(err) => {
-        if self.debug {
+      Err(_) => {
+        if debug {
           println!("Failed to send client control frame of code {}", opcode);
         }
       }
@@ -371,13 +360,12 @@ impl ClientSocket {
   pub async fn disconnect(&mut self) {
    // if let Some(tx) = self.sender.take() {
       //tx.send(()).await.unwrap();
-    self.send_control_frame(8).await;
+    Self::send_control_frame(self.write_stream.as_mut().unwrap(), 8, self.debug).await;
     if let Some(jh) = self.reader_thread.take() {
       jh.await.unwrap();
     }
-    //}
-    self.stream.as_mut()
-      .expect("Stream not instantiated")
+    self.write_stream.as_mut().expect("Stream not instantiated").lock()
+      .await
       .shutdown()
       .await
       .unwrap();

@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::vec;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use crate::server::connectedclient::ConnectedClient;
 
 pub struct ConcurrentServer {
   ip: String,
@@ -14,6 +15,7 @@ pub struct ConcurrentServer {
   listener: TcpListener,
   server_log: Arc<Mutex<Logger>>,
   opts: Opts,
+  clients: Vec<Option<ConnectedClient>>,
 }
 
 async fn create_listener(ip: String, port: u16) -> TcpListener {
@@ -109,6 +111,7 @@ impl ConcurrentServer {
       listener: create_listener(ip, port).await,
       server_log: Arc::new(Mutex::new(Logger::new())),
       opts,
+      clients: Vec::new(),
     }
   }
 
@@ -197,7 +200,7 @@ impl ConcurrentServer {
             return (None, None);
           }
           Some(opcode_val) => {
-            if opcode_val == 1 {
+            if opcode_val == 0x1 {
               match payload {
                 None => {
                   return (opcode, payload);
@@ -223,12 +226,24 @@ impl ConcurrentServer {
     }
   }
 
+  pub async fn heartbeat() {
+  }
+
+  
+
   pub async fn write_message(
+    client_ids: Vec<u32>,
     server_log: &Arc<Mutex<Logger>>,
     message: &String,
     stream: &mut TcpStream,
   ) -> bool {
+
+
     let buf = pack_message_frame(message.clone());
+    for client_id in client_ids {
+      let client = 
+    }
+
     match stream.write(&buf).await {
       Ok(_) => {
         let msg: String = format!("Server Write: {}", message);
@@ -253,7 +268,7 @@ impl ConcurrentServer {
           println!("Server sent opcode {} ", opcode);
         }
       }
-      Err(err) => {
+      Err(_) => {
         if debug {
           println!("Failed to send server control frame of code {}", opcode);
         }
@@ -272,16 +287,20 @@ impl ConcurrentServer {
           break;
         }
         let opcode_val = opcode.unwrap();
-        if opcode_val == 8 {
-          if (debug) {
+        if opcode_val == 0x8 {
+          if debug {
             println!("Server received opcode 8");
           }
           Self::send_control_frame(&mut stream, opcode_val, debug).await;
           break;
-        } else {
+        } else if opcode_val == 0x9 {
+          Self::send_control_frame(&mut stream, 0xA, debug).await;
+        } else if opcode_val == 0x1{
           if !Self::write_message(server_log, &reply, &mut stream).await {
             break;
           }
+        } else {
+          break;
         }
       }
     } else {
@@ -293,7 +312,7 @@ impl ConcurrentServer {
       println!("client all done");
     }
     let logger = server_log.lock().unwrap();
-    logger.print_log();
+    logger.print_log().unwrap();
   }
 
   
