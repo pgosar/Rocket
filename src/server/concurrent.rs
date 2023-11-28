@@ -1,3 +1,4 @@
+use crate::server::connectedclient::ConnectedClient;
 use crate::utils::logging::*;
 use crate::utils::utils::{sec_websocket_key, Opts};
 use std::collections::HashMap;
@@ -6,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::vec;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use crate::server::connectedclient::ConnectedClient;
 
+#[derive(Debug)]
 pub struct ConcurrentServer {
   ip: String,
   port: u16,
@@ -26,19 +27,21 @@ async fn create_listener(ip: String, port: u16) -> TcpListener {
 
 fn pack_message_frame(payload: String) -> Vec<u8> {
   // FIN = 1 (only frame in message), RSV1-3 = 0, opcode = 0001 (text frame)
-  let mut frame: Vec<u8> = vec![0b10000001]; 
+  let mut frame: Vec<u8> = vec![0b10000001];
   frame.reserve(1024);
 
   let mut second_byte: u8 = 0;
   let strlen = payload.len() as u64;
   let mut len_bytes = 0;
   //if from_client { // set mask bit
-    //second_byte += 1 << 7;
+  //second_byte += 1 << 7;
   //}
-  if strlen > 65535 { // 8 byte payload len
+  if strlen > 65535 {
+    // 8 byte payload len
     second_byte += 127;
     len_bytes = 8;
-  } else if strlen > 125 { // 2 byte payload len
+  } else if strlen > 125 {
+    // 2 byte payload len
     second_byte += 126;
     len_bytes = 2;
   } else {
@@ -61,7 +64,8 @@ fn pack_message_frame(payload: String) -> Vec<u8> {
 fn unpack_client_frame(buf: &mut Vec<u8>) -> (Option<u8>, Option<String>) {
   let first_byte = buf[0];
   let fin: bool = (first_byte & 128) >> 7 == 1;
-  if !fin { // change
+  if !fin {
+    // change
     return (None, None);
   }
   let rsv: u8 = first_byte & 0b01110000;
@@ -69,13 +73,15 @@ fn unpack_client_frame(buf: &mut Vec<u8>) -> (Option<u8>, Option<String>) {
     return (None, None);
   }
   let opcode: u8 = first_byte & 15;
-  if opcode != 1 { // text frame, change this later
+  if opcode != 1 {
+    // text frame, change this later
     return (Some(opcode), None);
   }
 
   let second_byte = buf[1];
   let mask: bool = (second_byte & 128) >> 7 == 1;
-  if !mask { // clients must mask stuff
+  if !mask {
+    // clients must mask stuff
     return (None, None);
   }
   let second_byte_payload_len = second_byte & 127;
@@ -90,10 +96,10 @@ fn unpack_client_frame(buf: &mut Vec<u8>) -> (Option<u8>, Option<String>) {
   }
 
   let mask_key_start = payload_len_bytes + 2;
-  let mut masking_key: Vec<u8> = vec![0;4];
-  masking_key.clone_from_slice(&buf[mask_key_start..mask_key_start+4]);
-  
-  let payload = &mut buf[mask_key_start+4..mask_key_start+4+payload_len];
+  let mut masking_key: Vec<u8> = vec![0; 4];
+  masking_key.clone_from_slice(&buf[mask_key_start..mask_key_start + 4]);
+
+  let payload = &mut buf[mask_key_start + 4..mask_key_start + 4 + payload_len];
   for i in 0..payload_len {
     payload[i] ^= masking_key[i % 4];
   }
@@ -125,12 +131,20 @@ impl ConcurrentServer {
       let (stream, addr) = self.listener.accept().await?;
       if *self.opts.debug() {
         println!("New client: {}", addr);
-        
       }
       let debug = (self.opts.debug()).clone();
       tokio::spawn(async move {
         Self::handle_client(&log_copy, stream, debug).await;
+        // Self::send_heartbeat(Arc::new(Mutex::new(stream)), debug).await;
       });
+    }
+  }
+
+  async fn send_heartbeat(stream: Arc<Mutex<TcpStream>>, debug: bool) {
+    let mut unwrap_stream = Arc::try_unwrap(stream).unwrap().into_inner().unwrap();
+    loop {
+      Self::send_control_frame(&mut unwrap_stream, 0x9, debug).await;
+      tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     }
   }
 
@@ -217,7 +231,7 @@ impl ConcurrentServer {
               return (opcode, payload);
             }
           }
-        }        
+        }
       }
       Err(err) => {
         println!("{}", err);
@@ -226,42 +240,34 @@ impl ConcurrentServer {
     }
   }
 
-  pub async fn heartbeat() {
-  }
-
-  
-
   pub async fn write_message(
-    client_ids: Vec<u32>,
+    client_ids: Vec<ConnectedClient>,
     server_log: &Arc<Mutex<Logger>>,
     message: &String,
     stream: &mut TcpStream,
   ) -> bool {
-
-
     let buf = pack_message_frame(message.clone());
-    for client_id in client_ids {
-      let client = 
-    }
-
-    match stream.write(&buf).await {
-      Ok(_) => {
-        let msg: String = format!("Server Write: {}", message);
-        let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
-        let mut logger = server_log.lock().unwrap();
-        logger.log(m);
-        true
-      }
-      Err(_) => {
-        println!("An error occurred while writing, terminating connection");
-        stream.shutdown().await.unwrap();
-        false
+    for client in client_ids {
+      match (*client.stream().lock().await).write(&buf).await {
+        Ok(_) => {
+          let msg: String = format!("Server Write: {}", message);
+          let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
+          let mut logger = server_log.lock().unwrap();
+          logger.log(m);
+          // return true;
+        }
+        Err(_) => {
+          println!("An error occurred while writing, terminating connection");
+          stream.shutdown().await.unwrap();
+          return false;
+        }
       }
     }
+    true
   }
 
   async fn send_control_frame(stream: &mut TcpStream, opcode: u8, debug: bool) {
-    let byte_msg: Vec<u8> = vec![0b10000000 + opcode]; 
+    let byte_msg: Vec<u8> = vec![0b10000000 + opcode];
     match stream.write(&byte_msg).await {
       Ok(_) => {
         if debug {
@@ -281,6 +287,7 @@ impl ConcurrentServer {
     let reply = String::from("YOYOYO");
     let handshake_success: bool = Self::verify_client_handshake(&mut stream).await;
     if handshake_success {
+      Self::send_heartbeat(Arc::new(Mutex::new(stream)), debug).await;
       loop {
         let (opcode, data) = Self::read_message(server_log, &mut buf, &mut stream, debug).await;
         if opcode.is_none() {
@@ -295,8 +302,8 @@ impl ConcurrentServer {
           break;
         } else if opcode_val == 0x9 {
           Self::send_control_frame(&mut stream, 0xA, debug).await;
-        } else if opcode_val == 0x1{
-          if !Self::write_message(server_log, &reply, &mut stream).await {
+        } else if opcode_val == 0x1 {
+          if !Self::write_message(Vec::new(), server_log, &reply, &mut stream).await {
             break;
           }
         } else {
@@ -314,6 +321,4 @@ impl ConcurrentServer {
     let logger = server_log.lock().unwrap();
     logger.print_log().unwrap();
   }
-
-  
 }

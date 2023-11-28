@@ -4,12 +4,14 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::time::SystemTime;
 
+#[derive(Debug)]
 pub enum ErrorLevel {
   INFO,
   WARNING,
   ERROR,
 }
 
+#[derive(Debug)]
 pub struct Message {
   msg: String,
   error_level: ErrorLevel,
@@ -29,6 +31,7 @@ impl Message {
   }
 }
 
+#[derive(Debug)]
 pub struct Logger {
   entries: VecDeque<Message>,
   max_time: f64,
