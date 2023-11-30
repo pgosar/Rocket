@@ -1,7 +1,7 @@
 use getset::Getters;
 use std::sync::Arc;
-use tokio::io::AsyncReadExt;
-use tokio::net::TcpStream;
+use tokio::net::tcp::OwnedWriteHalf;
+
 use tokio::sync::Mutex;
 
 #[derive(Debug, Getters)]
@@ -11,11 +11,11 @@ pub struct ConnectedClient {
   connected_status: bool,
   last_ping_time: u32,
   #[getset(get = "pub")]
-  stream: Arc<Mutex<TcpStream>>,
+  stream: Arc<Mutex<OwnedWriteHalf>>,
 }
 
 impl ConnectedClient {
-  pub async fn new(id: u32, stream: Arc<Mutex<TcpStream>>) -> ConnectedClient {
+  pub fn new(id: u32, stream: Arc<Mutex<OwnedWriteHalf>>) -> ConnectedClient {
     let client = ConnectedClient {
       id,
       heartbeat_status: false,
@@ -24,18 +24,18 @@ impl ConnectedClient {
       stream: Arc::clone(&stream),
     };
     let client_arc = Arc::new(Mutex::new(client));
-    let cloned_client = Arc::clone(&client_arc);
-    tokio::spawn(async move {
+    //let cloned_client = Arc::clone(&client_arc);
+    /*tokio::spawn(async move {
       let mut client = cloned_client.lock().await;
       client.acknowledge_heartbeat().await;
-    });
+    });*/
 
     Arc::try_unwrap(client_arc).unwrap().into_inner()
   }
 
   pub fn send_message(&self) {}
 
-  pub async fn acknowledge_heartbeat(&mut self) {
+  /*pub async fn acknowledge_heartbeat(&mut self) {
     loop {
       tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
@@ -51,5 +51,5 @@ impl ConnectedClient {
         }
       }
     }
-  }
+  }*/
 }

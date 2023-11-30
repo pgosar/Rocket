@@ -3,10 +3,12 @@ use crate::utils::logging::*;
 use crate::utils::utils::{sec_websocket_key, Opts};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::vec;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{Mutex, RwLock};
 
 #[derive(Debug)]
 pub struct ConcurrentServer {
@@ -16,7 +18,7 @@ pub struct ConcurrentServer {
   listener: TcpListener,
   server_log: Arc<Mutex<Logger>>,
   opts: Opts,
-  clients: Vec<Option<ConnectedClient>>,
+  clients: Arc<RwLock<HashMap<u32, Mutex<ConnectedClient>>>>,
 }
 
 async fn create_listener(ip: String, port: u16) -> TcpListener {
@@ -117,7 +119,7 @@ impl ConcurrentServer {
       listener: create_listener(ip, port).await,
       server_log: Arc::new(Mutex::new(Logger::new())),
       opts,
-      clients: Vec::new(),
+      clients: Arc::new(RwLock::new(HashMap::new())),
     }
   }
 
@@ -128,23 +130,17 @@ impl ConcurrentServer {
     let server_log = &mut self.server_log;
     loop {
       let log_copy = Arc::clone(server_log);
+      let clients_copy = Arc::clone(&self.clients);
+
       let (stream, addr) = self.listener.accept().await?;
       if *self.opts.debug() {
         println!("New client: {}", addr);
       }
       let debug = (self.opts.debug()).clone();
       tokio::spawn(async move {
-        Self::handle_client(&log_copy, stream, debug).await;
+        Self::handle_client(&log_copy, stream, clients_copy, debug).await;
         // Self::send_heartbeat(Arc::new(Mutex::new(stream)), debug).await;
       });
-    }
-  }
-
-  async fn send_heartbeat(stream: Arc<Mutex<TcpStream>>, debug: bool) {
-    let mut unwrap_stream = Arc::try_unwrap(stream).unwrap().into_inner().unwrap();
-    loop {
-      Self::send_control_frame(&mut unwrap_stream, 0x9, debug).await;
-      tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     }
   }
 
@@ -196,7 +192,7 @@ impl ConcurrentServer {
   pub async fn read_message(
     server_log: &Arc<Mutex<Logger>>,
     buf: &mut Vec<u8>,
-    stream: &mut TcpStream,
+    stream: &mut OwnedReadHalf,
     debug: bool,
   ) -> (Option<u8>, Option<String>) {
     match stream.read(buf).await {
@@ -222,7 +218,7 @@ impl ConcurrentServer {
                 Some(msg) => {
                   let log_msg: String = format!("Server Read: {}", &msg);
                   let m: Message = Message::new(log_msg.clone(), ErrorLevel::INFO);
-                  let mut logger = server_log.lock().unwrap();
+                  let mut logger = server_log.lock().await;
                   logger.log(m);
                   return (opcode, Some(msg));
                 }
@@ -241,24 +237,27 @@ impl ConcurrentServer {
   }
 
   pub async fn write_message(
-    client_ids: Vec<ConnectedClient>,
+    client_ids: Vec<u32>,
+    all_clients: &Arc<RwLock<HashMap<u32, Mutex<ConnectedClient>>>>,
     server_log: &Arc<Mutex<Logger>>,
     message: &String,
-    stream: &mut TcpStream,
   ) -> bool {
     let buf = pack_message_frame(message.clone());
     for client in client_ids {
-      match (*client.stream().lock().await).write(&buf).await {
+      let client_map = all_clients.read().await;
+      let client_object = client_map.get(&client).unwrap().lock().await;
+      let mut client_stream = client_object.stream().lock().await;
+      match (*client_stream).write(&buf).await {
         Ok(_) => {
           let msg: String = format!("Server Write: {}", message);
           let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
-          let mut logger = server_log.lock().unwrap();
+          let mut logger = server_log.lock().await;
           logger.log(m);
           // return true;
         }
         Err(_) => {
           println!("An error occurred while writing, terminating connection");
-          stream.shutdown().await.unwrap();
+          client_stream.shutdown().await.unwrap();
           return false;
         }
       }
@@ -266,8 +265,22 @@ impl ConcurrentServer {
     true
   }
 
-  async fn send_control_frame(stream: &mut TcpStream, opcode: u8, debug: bool) {
+  /*async fn send_heartbeat(stream: &mut TcpStream, debug: bool) {
+    // let mut unwrap_stream = Arc::try_unwrap(stream).unwrap().into_inner().unwrap();
+    loop {
+      Self::send_control_frame(stream, 0x9, debug).await;
+      tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+      if debug {
+        println!("server sent heartbeat");
+      }
+    }
+  }*/
+
+  async fn send_control_frame(stream: &mut OwnedWriteHalf, opcode: u8, debug: bool) {
     let byte_msg: Vec<u8> = vec![0b10000000 + opcode];
+    if opcode == 0x9 {
+      // Self::send_heartbeat(stream, debug);
+    }
     match stream.write(&byte_msg).await {
       Ok(_) => {
         if debug {
@@ -282,14 +295,30 @@ impl ConcurrentServer {
     }
   }
 
-  pub async fn handle_client(server_log: &Arc<Mutex<Logger>>, mut stream: TcpStream, debug: bool) {
+  pub async fn handle_client(
+    server_log: &Arc<Mutex<Logger>>,
+    mut stream: TcpStream,
+    clients: Arc<RwLock<HashMap<u32, Mutex<ConnectedClient>>>>,
+    debug: bool,
+  ) {
     let mut buf: Vec<u8> = vec![0; 1024];
-    let reply = String::from("YOYOYO");
     let handshake_success: bool = Self::verify_client_handshake(&mut stream).await;
     if handshake_success {
-      Self::send_heartbeat(Arc::new(Mutex::new(stream)), debug).await;
+      // Self::send_heartbeat(Arc::new(Mutex::new(stream)), debug).await;
+      let (mut read_half, mut write_half) = stream.into_split();
+      let (_, first_data) = Self::read_message(server_log, &mut buf, &mut read_half, debug).await;
+      let id = first_data.unwrap().parse::<u32>().unwrap();
+      let mut client_map = clients.write().await;
+
+      let write_half_arc = Arc::new(Mutex::new(write_half));
+      client_map.insert(
+        id,
+        Mutex::new(ConnectedClient::new(id, Arc::clone(&write_half_arc))),
+      );
+      std::mem::drop(client_map);
+
       loop {
-        let (opcode, data) = Self::read_message(server_log, &mut buf, &mut stream, debug).await;
+        let (opcode, data) = Self::read_message(server_log, &mut buf, &mut read_half, debug).await;
         if opcode.is_none() {
           break;
         }
@@ -298,12 +327,21 @@ impl ConcurrentServer {
           if debug {
             println!("Server received opcode 8");
           }
-          Self::send_control_frame(&mut stream, opcode_val, debug).await;
+          let mut wh = write_half_arc.lock().await;
+          Self::send_control_frame(&mut wh, opcode_val, debug).await;
           break;
         } else if opcode_val == 0x9 {
-          Self::send_control_frame(&mut stream, 0xA, debug).await;
+          let mut wh = write_half_arc.lock().await;
+          Self::send_control_frame(&mut wh, 0xA, debug).await;
         } else if opcode_val == 0x1 {
-          if !Self::write_message(Vec::new(), server_log, &reply, &mut stream).await {
+          let unwrapped_data = data.unwrap();
+          let split_data: Vec<&str> = unwrapped_data.split(',').collect();
+          let text_message = String::from(split_data[split_data.len() - 1]);
+          let ids: Vec<u32> = split_data[0..split_data.len() - 1]
+            .iter()
+            .map(|s| s.parse::<u32>().unwrap())
+            .collect();
+          if !Self::write_message(ids, &clients, server_log, &text_message).await {
             break;
           }
         } else {
@@ -318,7 +356,7 @@ impl ConcurrentServer {
     if debug {
       println!("client all done");
     }
-    let logger = server_log.lock().unwrap();
+    let logger = server_log.lock().await;
     logger.print_log().unwrap();
   }
 }

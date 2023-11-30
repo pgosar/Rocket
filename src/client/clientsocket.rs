@@ -5,10 +5,10 @@ use std::vec::Vec;
 use tokio::task::JoinHandle;
 
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 
 pub struct ClientSocket {
   server_uri: String,
@@ -29,16 +29,18 @@ fn generate_key() -> String {
 
 fn pack_message_frame(payload: String, masking_key: &Vec<u8>) -> Vec<u8> {
   // FIN = 1 (only frame in message), RSV1-3 = 0, opcode = 0001 (text frame)
-  let mut frame: Vec<u8> = vec![0b10000001]; 
+  let mut frame: Vec<u8> = vec![0b10000001];
   frame.reserve(1024);
 
   let mut second_byte: u8 = 128; // set mask bit
   let strlen = payload.len() as u64;
   let mut len_bytes = 0;
-  if strlen > 65535 { // 8 byte payload len
+  if strlen > 65535 {
+    // 8 byte payload len
     second_byte += 127;
     len_bytes = 8;
-  } else if strlen > 125 { // 2 byte payload len
+  } else if strlen > 125 {
+    // 2 byte payload len
     second_byte += 126;
     len_bytes = 2;
   } else {
@@ -57,15 +59,16 @@ fn pack_message_frame(payload: String, masking_key: &Vec<u8>) -> Vec<u8> {
   let payload_start = frame.len();
   frame.extend_from_slice(payload.as_bytes());
   for i in 0..(strlen as usize) {
-    frame[i + payload_start] ^= masking_key[i % 4]; 
+    frame[i + payload_start] ^= masking_key[i % 4];
   }
   frame
 }
 
-fn unpack_server_frame(buf: &mut Vec<u8>) ->(Option<u8>, Option<String>) {
+fn unpack_server_frame(buf: &mut Vec<u8>) -> (Option<u8>, Option<String>) {
   let first_byte = buf[0];
   let fin: bool = (first_byte & 128) >> 7 == 1;
-  if !fin { // change
+  if !fin {
+    // change
     return (None, None);
   }
   let rsv: u8 = first_byte & 0b01110000;
@@ -73,13 +76,15 @@ fn unpack_server_frame(buf: &mut Vec<u8>) ->(Option<u8>, Option<String>) {
     return (None, None);
   }
   let opcode: u8 = first_byte & 15;
-  if opcode != 1 { // text frame, change this later
+  if opcode != 1 {
+    // text frame, change this later
     return (Some(opcode), None);
   }
 
   let second_byte = buf[1];
   let mask: bool = (second_byte & 128) >> 7 == 1;
-  if mask { // servers must not mask stuff
+  if mask {
+    // servers must not mask stuff
     return (None, None);
   }
   let second_byte_payload_len = second_byte & 127;
@@ -94,14 +99,12 @@ fn unpack_server_frame(buf: &mut Vec<u8>) ->(Option<u8>, Option<String>) {
   }
 
   let payload_start = payload_len_bytes + 2;
-  
-  let payload = &mut buf[payload_start..payload_start+payload_len];
+
+  let payload = &mut buf[payload_start..payload_start + payload_len];
   let s = (*String::from_utf8_lossy(payload)).to_string();
 
   (Some(opcode), Some(s))
 }
-
-
 
 impl ClientSocket {
   pub async fn new(uri: String, debug: bool) -> ClientSocket {
@@ -123,13 +126,17 @@ impl ClientSocket {
       server_path: path,
       write_stream: None,
       reader_thread: None,
-      mask_key: vec![0;4],
+      mask_key: vec![0; 4],
       debug,
       connected: false,
     }
   }
 
-  async fn handshake_http(&mut self, read_half: &mut OwnedReadHalf, write_half: &mut OwnedWriteHalf) -> bool {
+  async fn handshake_http(
+    &mut self,
+    read_half: &mut OwnedReadHalf,
+    write_half: &mut OwnedWriteHalf,
+  ) -> bool {
     //dGhlIHNhbXBsZSBub25jZQ==
     let mut buf = vec![0; 1024];
     let my_addr: std::net::SocketAddr = read_half.local_addr().unwrap();
@@ -157,9 +164,9 @@ impl ClientSocket {
       }
     }
     /*stream
-      .write(handshake.as_bytes())
-      .await
-      .expect("write failed");*/
+    .write(handshake.as_bytes())
+    .await
+    .expect("write failed");*/
     match read_half.read(&mut buf).await {
       Ok(size) => {
         let request = String::from_utf8_lossy(&buf[..size]);
@@ -178,7 +185,9 @@ impl ClientSocket {
             return false;
           }
           let old = m.get(split_line[0]);
-          if old.is_none() /*|| old.take().is_some()*/ {
+          if old.is_none()
+          /*|| old.take().is_some()*/
+          {
             // each correct key should exist once and only once
             //println!("invalid key {} {} {}", split_line[0], old.is_none(), val);
             return false;
@@ -221,7 +230,7 @@ impl ClientSocket {
   ) {
     println!("beginning of reader loop");
     let mut buf = vec![0; 1024];
-    loop { 
+    loop {
       match read_stream.read(&mut buf).await {
         Ok(size) => {
           if size == 0 {
@@ -242,16 +251,14 @@ impl ClientSocket {
                   println!("Client received closing frame");
                 }
                 break;
-
-              } else if opcode_val == 0x9 { // ping, send pong
+              } else if opcode_val == 0x9 {
+                // ping, send pong
                 // send control frame of 0xA
                 Self::send_control_frame(write_stream, 0xA, debug).await;
                 if debug {
                   println!("Client received ping");
                 }
-                
-              }
-              else if opcode_val == 0x1 {
+              } else if opcode_val == 0x1 {
                 match payload {
                   None => {}
                   Some(msg) => {
@@ -260,7 +267,8 @@ impl ClientSocket {
                     }
                   }
                 }
-              } else { // handle pings and pongs
+              } else {
+                // handle pings and pongs
                 break;
               }
             }
@@ -277,12 +285,13 @@ impl ClientSocket {
     println!("end of reader loop");
   }
 
-  pub async fn write_message(&mut self, msg: String) {
+  pub async fn write_message(&mut self, recipients: Vec<usize>, msg: String) {
     if !self.connected {
       panic!("Client not connected");
     }
-    let byte_msg = pack_message_frame(msg.clone(), &self.mask_key);
-    let mut stream = self.write_stream.as_mut().unwrap().lock().await;    
+    let combined_msg = recipients.iter().map(|x| x.to_string()).collect::<String>() + "," + &msg;
+    let byte_msg = pack_message_frame(combined_msg.clone(), &self.mask_key);
+    let mut stream = self.write_stream.as_mut().unwrap().lock().await;
     match stream.write(&byte_msg).await {
       Ok(_) => {
         if self.debug {
@@ -297,7 +306,7 @@ impl ClientSocket {
     }
   }
 
-  pub async fn connect(&mut self) {
+  pub async fn connect(&mut self, id: u32) {
     let address: String = format!("{}:{}", self.server_uri, self.server_port);
     if self.debug {
       println!("Connecting to {}", address);
@@ -314,6 +323,7 @@ impl ClientSocket {
               self.server_port
             );
           }
+          self.write_message(Vec::new(), id.to_string()).await;
           //let (tx, rx) = channel(8);
           //self.sender = Some(tx);
           let debug = self.debug;
@@ -341,7 +351,7 @@ impl ClientSocket {
   }
 
   async fn send_control_frame(write_stream: &Arc<Mutex<OwnedWriteHalf>>, opcode: u8, debug: bool) {
-    let byte_msg: Vec<u8> = vec![0b10000000 + opcode]; 
+    let byte_msg: Vec<u8> = vec![0b10000000 + opcode];
     let mut stream = write_stream.lock().await;
     match stream.write(&byte_msg).await {
       Ok(_) => {
@@ -358,13 +368,17 @@ impl ClientSocket {
   }
 
   pub async fn disconnect(&mut self) {
-   // if let Some(tx) = self.sender.take() {
-      //tx.send(()).await.unwrap();
+    // if let Some(tx) = self.sender.take() {
+    //tx.send(()).await.unwrap();
     Self::send_control_frame(self.write_stream.as_mut().unwrap(), 8, self.debug).await;
     if let Some(jh) = self.reader_thread.take() {
       jh.await.unwrap();
     }
-    self.write_stream.as_mut().expect("Stream not instantiated").lock()
+    self
+      .write_stream
+      .as_mut()
+      .expect("Stream not instantiated")
+      .lock()
       .await
       .shutdown()
       .await
@@ -373,4 +387,3 @@ impl ClientSocket {
     println!("disconnecting client");
   }
 }
-
