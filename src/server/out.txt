@@ -1,0 +1,17 @@
+mode: s debug: true repeats: 2
+Server running on ::1:8080
+localhost 8080 /
+Connecting to localhost:8080
+New client: [::1]:39608
+Handshake succeeded
+Successfully connected to server in port 8080
+Client Sent: 0
+[0]
+Client Sent: Hello World
+beginning of reader loop
+first data: ,0
+[0]
+Error writing from client: Broken pipe (os error 32)
+size is 0
+end of reader loop
+Failed to send client control frame of code 8

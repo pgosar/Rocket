@@ -10,16 +10,7 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock};
 
-#[derive(Debug)]
-pub struct ConcurrentServer {
-  ip: String,
-  port: u16,
-  key: String,
-  listener: TcpListener,
-  server_log: Arc<Mutex<Logger>>,
-  opts: Opts,
-  clients: Arc<RwLock<HashMap<u32, Mutex<ConnectedClient>>>>,
-}
+type ClientMap = Arc<RwLock<HashMap<u32, Mutex<ConnectedClient>>>>;
 
 async fn create_listener(ip: String, port: u16) -> TcpListener {
   let address: SocketAddr = format!("[{}]:{}", ip, port).parse().unwrap();
@@ -110,6 +101,17 @@ fn unpack_client_frame(buf: &mut Vec<u8>) -> (Option<u8>, Option<String>) {
   (Some(opcode), Some(s))
 }
 
+#[derive(Debug)]
+pub struct ConcurrentServer {
+  ip: String,
+  port: u16,
+  key: String,
+  listener: TcpListener,
+  server_log: Arc<Mutex<Logger>>,
+  opts: Opts,
+  clients: ClientMap,
+}
+
 impl ConcurrentServer {
   pub async fn new(ip: String, port: u16, key: String, opts: Opts) -> ConcurrentServer {
     ConcurrentServer {
@@ -119,7 +121,7 @@ impl ConcurrentServer {
       listener: create_listener(ip, port).await,
       server_log: Arc::new(Mutex::new(Logger::new())),
       opts,
-      clients: Arc::new(RwLock::new(HashMap::new())),
+      clients: ClientMap::new(RwLock::new(HashMap::new())),
     }
   }
 
@@ -238,15 +240,18 @@ impl ConcurrentServer {
 
   pub async fn write_message(
     client_ids: Vec<u32>,
-    all_clients: &Arc<RwLock<HashMap<u32, Mutex<ConnectedClient>>>>,
+    all_clients: &ClientMap,
     server_log: &Arc<Mutex<Logger>>,
     message: &String,
   ) -> bool {
     let buf = pack_message_frame(message.clone());
+    println!("not running??");
     for client in client_ids {
+      println!("running");
       let client_map = all_clients.read().await;
       let client_object = client_map.get(&client).unwrap().lock().await;
       let mut client_stream = client_object.stream().lock().await;
+      println!("buf: {:?}", buf);
       match (*client_stream).write(&buf).await {
         Ok(_) => {
           let msg: String = format!("Server Write: {}", message);
@@ -298,7 +303,7 @@ impl ConcurrentServer {
   pub async fn handle_client(
     server_log: &Arc<Mutex<Logger>>,
     mut stream: TcpStream,
-    clients: Arc<RwLock<HashMap<u32, Mutex<ConnectedClient>>>>,
+    clients: ClientMap,
     debug: bool,
   ) {
     let mut buf: Vec<u8> = vec![0; 1024];
@@ -307,7 +312,8 @@ impl ConcurrentServer {
       // Self::send_heartbeat(Arc::new(Mutex::new(stream)), debug).await;
       let (mut read_half, mut write_half) = stream.into_split();
       let (_, first_data) = Self::read_message(server_log, &mut buf, &mut read_half, debug).await;
-      let id = first_data.unwrap().parse::<u32>().unwrap();
+      println!("first data: {}", first_data.clone().unwrap());
+      let id = first_data.unwrap().parse::<u32>().expect("Invalid id");
       let mut client_map = clients.write().await;
 
       let write_half_arc = Arc::new(Mutex::new(write_half));
