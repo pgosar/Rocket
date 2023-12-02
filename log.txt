@@ -1,4 +1,0 @@
-[INFO] Server Read: Hello World
-[INFO] Server Read: Other Client
-[INFO] Server Read: Other Client
-[INFO] Server Read: Hello World
