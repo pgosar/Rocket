@@ -24,17 +24,19 @@ pub struct Opts {
   #[getset(get = "pub")]
   log: bool,
   #[getset(get = "pub")]
-  verbosity: i32,
+  verbosity: usize,
   #[getset(get = "pub")]
-  repeats: i32,
+  repeats: u32,
   #[getset(get = "pub")]
-  num_clients: i32,
+  num_clients: usize,
   #[getset(get = "pub")]
-  out_degree: i32,
+  out_degree: usize,
   #[getset(get = "pub")]
-  sleep_time_mean: i32,
+  sleep_time_mean: f32,
   #[getset(get = "pub")]
-  sleep_time_std: i32,
+  sleep_time_std: f32,
+  #[getset(get = "pub")]
+  threads: usize,
 }
 
 impl Opts {
@@ -60,6 +62,15 @@ impl Opts {
           .value_parser(["0", "1", "2", "3"])
           .default_value("0")
           .num_args(1),
+      )
+      .arg(
+        Arg::new("log")
+          .short('l')
+          .long("log")
+          .value_name("FILE")
+          .help("sets whether to output to log file")
+          .required(false)
+          .num_args(0),
       )
       .arg(
         Arg::new("mode")
@@ -112,35 +123,44 @@ impl Opts {
           .num_args(2),
       )
       .arg(
-        Arg::new("log")
-          .short('l')
-          .long("log")
-          .value_name("FILE")
-          .help("sets whether to output to log file")
+        Arg::new("num_threads")
+          .short('t')
+          .long("num_threads")
+          .value_name("NUM")
+          .help("sets the number of threads")
           .required(false)
-          .num_args(0),
+          .default_value(
+            &std::thread::available_parallelism()
+              .unwrap()
+              .get()
+              .to_string()
+              .as_str(),
+          )
+          .num_args(1),
       );
     let matches = app.get_matches();
     println!("{:?}", matches);
     let debug = matches.contains_id("debug");
     let log = matches.contains_id("log");
     let verbosity_str: &String = matches.get_one("verbosity").unwrap();
-    let verbosity: i32 = verbosity_str.parse::<i32>().unwrap();
+    let verbosity: usize = verbosity_str.parse::<usize>().unwrap();
     let mode: &String = matches.get_one("mode").expect("mode is required");
     let repeats_str: &String = matches.get_one("repeats").unwrap();
-    let repeats: i32 = repeats_str.parse::<i32>().unwrap();
+    let repeats: u32 = repeats_str.parse::<u32>().unwrap();
     let num_clients_str: &String = matches.get_one("num_clients").unwrap();
-    let num_clients: i32 = num_clients_str.parse::<i32>().unwrap();
+    let num_clients: usize = num_clients_str.parse::<usize>().unwrap();
     let out_degree_str: &String = matches.get_one("out_degree").unwrap();
-    let out_degree: i32 = out_degree_str.parse::<i32>().unwrap();
+    let out_degree: usize = out_degree_str.parse::<usize>().unwrap();
+    let threads_str: &String = matches.get_one("num_threads").unwrap();
+    let threads: usize = threads_str.parse::<usize>().unwrap();
     let sleep_time: Vec<String> = matches
       .get_many("sleep_time")
       .unwrap()
       .map(|v: &String| v.to_string())
       .collect();
     println!("{:?}", sleep_time);
-    let sleep_time_mean: i32 = sleep_time[0].parse::<i32>().unwrap();
-    let sleep_time_std: i32 = sleep_time[1].parse::<i32>().unwrap();
+    let sleep_time_mean: f32 = sleep_time[0].parse::<f32>().unwrap();
+    let sleep_time_std: f32 = sleep_time[1].parse::<f32>().unwrap();
     let opts = Opts {
       mode: mode.to_string(),
       debug,
@@ -151,6 +171,7 @@ impl Opts {
       out_degree,
       sleep_time_mean,
       sleep_time_std,
+      threads,
     };
     if debug {
       println!("{:?}", opts);

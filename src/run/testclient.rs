@@ -1,5 +1,6 @@
 use crate::client::clientsocket::ClientSocket;
 use rand::seq::index::sample;
+use rand_distr::Distribution;
 use std::vec::Vec;
 
 pub struct TestClient {
@@ -19,6 +20,8 @@ impl TestClient {
     repeats: u32,
     num_clients: usize,
     out_degree: usize,
+    sleep_mean: f32,
+    sleep_std: f32,
   ) -> std::io::Result<()> {
     let mut rng: rand::rngs::StdRng = rand::SeedableRng::from_entropy();
     self.socket.connect(self.id).await;
@@ -27,6 +30,9 @@ impl TestClient {
       let recipients: Vec<usize> = sample(&mut rng, num_clients, out_degree).into_vec();
       println!("client socket {} sending to {:?}", self.id, recipients);
       self.socket.write_message(recipients, msg.clone()).await;
+      let time = rand_distr::Normal::new(sleep_mean, sleep_std)
+        .unwrap()
+        .sample(&mut rng);
       tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
