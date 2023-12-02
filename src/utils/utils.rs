@@ -129,17 +129,9 @@ impl Opts {
           .value_name("NUM")
           .help("sets the number of threads")
           .required(false)
-          .default_value(
-            &std::thread::available_parallelism()
-              .unwrap()
-              .get()
-              .to_string()
-              .as_str(),
-          )
           .num_args(1),
       );
     let matches = app.get_matches();
-    println!("{:?}", matches);
     let debug = matches.contains_id("debug");
     let log = matches.contains_id("log");
     let verbosity_str: &String = matches.get_one("verbosity").unwrap();
@@ -151,7 +143,11 @@ impl Opts {
     let num_clients: usize = num_clients_str.parse::<usize>().unwrap();
     let out_degree_str: &String = matches.get_one("out_degree").unwrap();
     let out_degree: usize = out_degree_str.parse::<usize>().unwrap();
-    let threads_str: &String = matches.get_one("num_threads").unwrap();
+    let num_cpus: &String = &std::thread::available_parallelism()
+      .unwrap()
+      .get()
+      .to_string();
+    let threads_str: &String = matches.get_one("num_threads").unwrap_or(num_cpus);
     let threads: usize = threads_str.parse::<usize>().unwrap();
     let sleep_time: Vec<String> = matches
       .get_many("sleep_time")
