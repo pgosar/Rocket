@@ -8,7 +8,7 @@ use run::run_seq::run;
 
 #[tokio::main()]
 async fn main() {
-  let opts: Opts = Opts::new();
   set_var("RUST_BACKTRACE", "1");
+  let opts: Opts = Opts::new();
   run(opts).await;
 }

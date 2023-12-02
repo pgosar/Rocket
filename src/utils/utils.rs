@@ -22,12 +22,19 @@ pub struct Opts {
   #[getset(get = "pub")]
   debug: bool,
   #[getset(get = "pub")]
+  log: bool,
+  #[getset(get = "pub")]
+  verbosity: i32,
+  #[getset(get = "pub")]
   repeats: i32,
   #[getset(get = "pub")]
   num_clients: i32,
   #[getset(get = "pub")]
   out_degree: i32,
-
+  #[getset(get = "pub")]
+  sleep_time_mean: i32,
+  #[getset(get = "pub")]
+  sleep_time_std: i32,
 }
 
 impl Opts {
@@ -43,6 +50,16 @@ impl Opts {
           .help("enables debugging mode")
           .required(false)
           .num_args(0),
+      )
+      .arg(
+        Arg::new("verbosity")
+          .short('v')
+          .long("verbose")
+          .help("sets the level of verbosity for debugging output")
+          .required(false)
+          .value_parser(["0", "1", "2", "3"])
+          .default_value("0")
+          .num_args(1),
       )
       .arg(
         Arg::new("mode")
@@ -83,24 +100,88 @@ impl Opts {
           .required(false)
           .default_value("1")
           .num_args(1),
+      )
+      .arg(
+        Arg::new("sleep_time")
+          .short('s')
+          .long("sleep_time")
+          .value_name("NUM1, NUM2")
+          .help("sets the mean and standard deviation of the sleep time between messages")
+          .required(false)
+          .default_value("1, 0")
+          .num_args(2),
+      )
+      .arg(
+        Arg::new("log")
+          .short('l')
+          .long("log")
+          .value_name("FILE")
+          .help("sets whether to output to log file")
+          .required(false)
+          .num_args(0),
       );
     let matches = app.get_matches();
+    println!("{:?}", matches);
     let debug = matches.contains_id("debug");
+    let log = matches.contains_id("log");
+    let verbosity_str: &String = matches.get_one("verbosity").unwrap();
+    let verbosity: i32 = verbosity_str.parse::<i32>().unwrap();
     let mode: &String = matches.get_one("mode").expect("mode is required");
-    let default: &String = &String::from("1");
-    let repeats_str: &String = matches.get_one("repeats").unwrap_or(default);
+    let repeats_str: &String = matches.get_one("repeats").unwrap();
     let repeats: i32 = repeats_str.parse::<i32>().unwrap();
-    let num_clients_str: &String = matches.get_one("num_clients").unwrap_or(default);
+    let num_clients_str: &String = matches.get_one("num_clients").unwrap();
     let num_clients: i32 = num_clients_str.parse::<i32>().unwrap();
-    let out_degree_str: &String = matches.get_one("out_degree").unwrap_or(default);
+    let out_degree_str: &String = matches.get_one("out_degree").unwrap();
     let out_degree: i32 = out_degree_str.parse::<i32>().unwrap();
-    println!("mode: {} debug: {} repeats: {}", mode, debug, repeats);
-    Opts {
+    let sleep_time: Vec<String> = matches
+      .get_many("sleep_time")
+      .unwrap()
+      .map(|v: &String| v.to_string())
+      .collect();
+    println!("{:?}", sleep_time);
+    let sleep_time_mean: i32 = sleep_time[0].parse::<i32>().unwrap();
+    let sleep_time_std: i32 = sleep_time[1].parse::<i32>().unwrap();
+    let opts = Opts {
       mode: mode.to_string(),
       debug,
+      log,
+      verbosity,
       repeats,
       num_clients,
       out_degree,
+      sleep_time_mean,
+      sleep_time_std,
+    };
+    if debug {
+      println!("{:?}", opts);
+    }
+    opts
+  }
+
+  pub fn generate_commands(&self) {
+    let modes = vec!["c", "s"];
+    let repeats = vec!["1", "5", "10", "20", "50"];
+    let num_clients = vec!["2", "5", "10", "20", "50"];
+    let out_degree = vec!["1", "3", "6", "15", "40"];
+    let sleep_time_mean = vec!["1", "2", "3", "5"];
+    let sleep_time_std = vec!["0", "1", "2", "3"];
+    let mut commands: Vec<String> = Vec::new();
+    for mode in modes {
+      for repeat in &repeats {
+        for num_client in &num_clients {
+          for out_degree in &out_degree {
+            for sleep_time_mean in &sleep_time_mean {
+              for sleep_time_std in &sleep_time_std {
+                let command = format!(
+                  "cargo run -- -m {} -r {} -n {} -o {} -s {},{}",
+                  mode, repeat, num_client, out_degree, sleep_time_mean, sleep_time_std
+                );
+                commands.push(command);
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
