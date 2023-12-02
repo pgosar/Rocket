@@ -157,31 +157,4 @@ impl Opts {
     }
     opts
   }
-
-  pub fn generate_commands(&self) {
-    let modes = vec!["c", "s"];
-    let repeats = vec!["1", "5", "10", "20", "50"];
-    let num_clients = vec!["2", "5", "10", "20", "50"];
-    let out_degree = vec!["1", "3", "6", "15", "40"];
-    let sleep_time_mean = vec!["1", "2", "3", "5"];
-    let sleep_time_std = vec!["0", "1", "2", "3"];
-    let mut commands: Vec<String> = Vec::new();
-    for mode in modes {
-      for repeat in &repeats {
-        for num_client in &num_clients {
-          for out_degree in &out_degree {
-            for sleep_time_mean in &sleep_time_mean {
-              for sleep_time_std in &sleep_time_std {
-                let command = format!(
-                  "cargo run -- -m {} -r {} -n {} -o {} -s {},{}",
-                  mode, repeat, num_client, out_degree, sleep_time_mean, sleep_time_std
-                );
-                commands.push(command);
-              }
-            }
-          }
-        }
-      }
-    }
-  }
 }
