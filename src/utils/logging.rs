@@ -35,24 +35,28 @@ impl Message {
 pub struct Logger {
   entries: VecDeque<Message>,
   max_time: f64,
+  output: bool,
 }
 
 impl Logger {
-  pub fn new() -> Logger {
+  pub fn new(output: bool) -> Logger {
     Logger {
       entries: VecDeque::new(),
       max_time: std::time::Duration::from_secs(10 * 60).as_secs_f64(), // 10 minutes
+      output,
     }
   }
 
   pub fn print_log(&self) -> io::Result<()> {
-    let log_file_path = Path::new("log.txt");
-    let mut log_file = File::create(log_file_path)?;
-    for entry in &self.entries {
-      match entry.error_level {
-        ErrorLevel::INFO => writeln!(log_file, "[INFO] {}", entry.msg)?,
-        ErrorLevel::WARNING => writeln!(log_file, "[WARNING] {}", entry.msg)?,
-        ErrorLevel::ERROR => writeln!(log_file, "[ERROR] {}", entry.msg)?,
+    if self.output {
+      let log_file_path = Path::new("log.txt");
+      let mut log_file = File::create(log_file_path)?;
+      for entry in &self.entries {
+        match entry.error_level {
+          ErrorLevel::INFO => writeln!(log_file, "[INFO] {}", entry.msg)?,
+          ErrorLevel::WARNING => writeln!(log_file, "[WARNING] {}", entry.msg)?,
+          ErrorLevel::ERROR => writeln!(log_file, "[ERROR] {}", entry.msg)?,
+        }
       }
     }
     Ok(())

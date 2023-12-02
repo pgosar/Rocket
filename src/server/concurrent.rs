@@ -119,7 +119,7 @@ impl ConcurrentServer {
       port,
       key,
       listener: create_listener(ip, port).await,
-      server_log: Arc::new(Mutex::new(Logger::new())),
+      server_log: Arc::new(Mutex::new(Logger::new(*opts.log()))),
       opts,
       clients: ClientMap::new(RwLock::new(HashMap::new())),
     }

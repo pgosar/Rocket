@@ -1,5 +1,5 @@
+use crate::run::testclient;
 use crate::server::concurrent::ConcurrentServer;
-use crate::test::testclient;
 use crate::utils::utils::Opts;
 use std::vec::Vec;
 use tokio::spawn;
@@ -9,8 +9,9 @@ pub async fn run(opts: Opts) {
   let debug = *opts.debug();
   let repeats = *opts.repeats();
   let num_clients = *opts.num_clients();
-  let out_degree = *opts.out_degree();
-
+  let out_degree = *opts.out_degree() as usize;
+  let sleep_mean: f32 = *opts.sleep_time_mean();
+  let sleep_std: f32 = *opts.sleep_time_std();
   let mut my_server =
     ConcurrentServer::new(String::from("::1"), 8080, "1234567890".to_string(), opts).await;
   let server_thread = spawn(async move {
@@ -24,9 +25,11 @@ pub async fn run(opts: Opts) {
       my_client
         .run_client(
           String::from("Hello World"),
-          repeats as u32,
-          num_clients as usize,
-          out_degree as usize,
+          repeats,
+          num_clients,
+          out_degree,
+          sleep_mean,
+          sleep_std,
         )
         .await
         .unwrap();
