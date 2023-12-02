@@ -1,10 +1,10 @@
 use std::env::set_var;
 mod client;
+mod run;
 mod server;
-mod test;
 mod utils;
 use crate::utils::utils::Opts;
-use test::run_seq::run;
+use run::run_seq::run;
 
 #[tokio::main()]
 async fn main() {
