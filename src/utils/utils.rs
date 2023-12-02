@@ -116,11 +116,11 @@ impl Opts {
         Arg::new("sleep_time")
           .short('s')
           .long("sleep_time")
-          .value_name("NUM1, NUM2")
+          .value_name("NUM")
           .help("sets the mean and standard deviation of the sleep time between messages")
           .required(false)
-          .default_value("1, 0")
-          .num_args(2),
+          .default_value("1")
+          .num_args(1),
       )
       .arg(
         Arg::new("num_threads")
@@ -149,14 +149,8 @@ impl Opts {
       .to_string();
     let threads_str: &String = matches.get_one("num_threads").unwrap_or(num_cpus);
     let threads: usize = threads_str.parse::<usize>().unwrap();
-    let sleep_time: Vec<String> = matches
-      .get_many("sleep_time")
-      .unwrap()
-      .map(|v: &String| v.to_string())
-      .collect();
-    println!("{:?}", sleep_time);
-    let sleep_time_mean: f32 = sleep_time[0].parse::<f32>().unwrap();
-    let sleep_time_std: f32 = sleep_time[1].parse::<f32>().unwrap();
+    let sleep_time_str: &String = matches.get_one("sleep_time").unwrap();
+    let sleep_time_mean: f32 = sleep_time_str.parse::<f32>().unwrap();
     let opts = Opts {
       mode: mode.to_string(),
       debug,
@@ -166,7 +160,7 @@ impl Opts {
       num_clients,
       out_degree,
       sleep_time_mean,
-      sleep_time_std,
+      sleep_time_std: 0.5,
       threads,
     };
     if debug {
