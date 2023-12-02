@@ -22,11 +22,12 @@ impl TestClient {
   ) -> std::io::Result<()> {
     let mut rng: rand::rngs::StdRng = rand::SeedableRng::from_entropy();
     self.socket.connect(self.id).await;
+    tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
     for _ in 0..repeats {
       let recipients: Vec<usize> = sample(&mut rng, num_clients, out_degree).into_vec();
-      println!("{:?}", recipients);
+      println!("client socket {} sending to {:?}", self.id, recipients);
       self.socket.write_message(recipients, msg.clone()).await;
-      tokio::time::sleep(std::time::Duration::from_millis(0)).await;
+      tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     self.socket.disconnect().await;

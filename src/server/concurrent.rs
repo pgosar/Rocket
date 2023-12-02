@@ -245,13 +245,14 @@ impl ConcurrentServer {
     message: &String,
   ) -> bool {
     let buf = pack_message_frame(message.clone());
-    println!("not running??");
+    //println!("not running??");
+    println!("Sending to {:?}", client_ids);
     for client in client_ids {
-      println!("running");
+      //println!("running");
       let client_map = all_clients.read().await;
       let client_object = client_map.get(&client).unwrap().lock().await;
       let mut client_stream = client_object.stream().lock().await;
-      println!("buf: {:?}", buf);
+      //println!("buf: {:?}", buf);
       match (*client_stream).write(&buf).await {
         Ok(_) => {
           let msg: String = format!("Server Write: {}", message);

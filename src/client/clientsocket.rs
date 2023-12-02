@@ -289,7 +289,9 @@ impl ClientSocket {
     if !self.connected {
       panic!("Client not connected");
     }
-    let combined_msg = recipients.iter().map(|x| x.to_string()).collect::<String>() + "," + &msg;
+    let mut combined_msg = recipients.iter().map(|x| x.to_string() + ",").collect::<String>();
+    combined_msg += &msg;
+    
     let byte_msg = pack_message_frame(combined_msg.clone(), &self.mask_key);
     let mut stream = self.write_stream.as_mut().unwrap().lock().await;
     match stream.write(&byte_msg).await {
