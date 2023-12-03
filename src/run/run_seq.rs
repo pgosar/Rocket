@@ -18,10 +18,18 @@ pub async fn run(opts: Opts) {
     my_server.run_server().await.unwrap();
   });
   let mut join_handles: Vec<JoinHandle<()>> = Vec::new();
+  let start = std::time::Instant::now();
+  let total_subtracted = std::time::Duration::from_millis(0);
   for i in 0..num_clients as u32 {
+    let client_start = std::time::Instant::now();
     let thread = spawn(async move {
       let mut my_client =
         testclient::TestClient::new(String::from("localhost:8080"), i, debug).await;
+      let client_end = std::time::Instant::now();
+      // subtracting construction time
+      total_subtracted
+        .checked_add(client_end.duration_since(client_start))
+        .unwrap();
       my_client
         .run_client(
           String::from("Hello World"),
@@ -39,5 +47,12 @@ pub async fn run(opts: Opts) {
   for jh in join_handles.into_iter() {
     jh.await.expect("Client thread failed");
   }
+  let end = std::time::Instant::now();
+  // end to end runtime - client construction time - client sleep times
+  let total_time = end
+    .duration_since(start)
+    .checked_sub(total_subtracted)
+    .unwrap();
+  println!("Total time: {:?}", total_time);
   server_thread.await.expect("Server thread failed");
 }

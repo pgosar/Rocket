@@ -51,6 +51,7 @@ impl Opts {
           .long("debug")
           .help("enables debugging mode")
           .required(false)
+          .action(clap::ArgAction::SetTrue)
           .num_args(0),
       )
       .arg(
@@ -132,8 +133,8 @@ impl Opts {
           .num_args(1),
       );
     let matches = app.get_matches();
-    let debug = matches.contains_id("debug");
-    let log = matches.contains_id("log");
+    let debug = matches.get_flag("debug");
+    let log = matches.get_flag("log");
     let verbosity_str: &String = matches.get_one("verbosity").unwrap();
     let verbosity: usize = verbosity_str.parse::<usize>().unwrap();
     let mode: Option<&String> = matches.get_one("mode");

@@ -228,7 +228,6 @@ impl ClientSocket {
     write_stream: &Arc<Mutex<OwnedWriteHalf>>,
     debug: bool,
   ) {
-    println!("beginning of reader loop");
     let mut buf = vec![0; 1024];
     loop {
       match read_stream.read(&mut buf).await {
@@ -282,16 +281,18 @@ impl ClientSocket {
         }
       }
     }
-    println!("end of reader loop");
   }
 
   pub async fn write_message(&mut self, recipients: Vec<usize>, msg: String) {
     if !self.connected {
       panic!("Client not connected");
     }
-    let mut combined_msg = recipients.iter().map(|x| x.to_string() + ",").collect::<String>();
+    let mut combined_msg = recipients
+      .iter()
+      .map(|x| x.to_string() + ",")
+      .collect::<String>();
     combined_msg += &msg;
-    
+
     let byte_msg = pack_message_frame(combined_msg.clone(), &self.mask_key);
     let mut stream = self.write_stream.as_mut().unwrap().lock().await;
     match stream.write(&byte_msg).await {
