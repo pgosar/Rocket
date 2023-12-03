@@ -1,0 +1,15 @@
+Running command: cargo run -- -r 50 -n 5 -o 1 -s 5 -t 1
+total time: 360.936125ms
+Reached 5 disconnect messages. Terminating process.
+Running command: cargo run -- -r 50 -n 5 -o 1 -s 5 -t 2
+total time: 360.589083ms
+Reached 5 disconnect messages. Terminating process.
+Running command: cargo run -- -r 50 -n 5 -o 1 -s 5 -t 4
+total time: 358.09575ms
+Reached 5 disconnect messages. Terminating process.
+Running command: cargo run -- -r 50 -n 5 -o 1 -s 5 -t 8
+total time: 344.351917ms
+Reached 5 disconnect messages. Terminating process.
+Running command: cargo run -- -r 50 -n 5 -o 1 -s 5 -t 16
+total time: 362.872916ms
+Reached 5 disconnect messages. Terminating process.
