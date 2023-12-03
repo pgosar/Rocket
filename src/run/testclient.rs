@@ -21,8 +21,7 @@ impl TestClient {
     repeats: u32,
     num_clients: usize,
     out_degree: usize,
-    sleep_mean: f32,
-    sleep_std: f32,
+    sleep_mean: u32,
   ) -> std::io::Result<()> {
     let mut rng: rand::rngs::StdRng = rand::SeedableRng::from_entropy();
     self.socket.connect(self.id).await;
@@ -32,11 +31,7 @@ impl TestClient {
       if self.debug {
         println!("client socket {} sending to {:?}", self.id, recipients);
       }
-      self.socket.write_message(recipients, msg.clone()).await;
-      let time = rand_distr::Normal::new(sleep_mean, sleep_std)
-        .unwrap()
-        .sample(&mut rng) as u64;
-      tokio::time::sleep(std::time::Duration::from_millis(time)).await;
+      tokio::time::sleep(std::time::Duration::from_millis(sleep_mean as u64)).await;
     }
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     self.socket.disconnect().await;

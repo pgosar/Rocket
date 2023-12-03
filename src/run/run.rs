@@ -10,8 +10,7 @@ pub async fn run(opts: Opts) {
   let repeats = *opts.repeats();
   let num_clients = *opts.num_clients();
   let out_degree = *opts.out_degree() as usize;
-  let sleep_mean: f32 = *opts.sleep_time_mean();
-  let sleep_std: f32 = *opts.sleep_time_std();
+  let sleep_mean: u32 = *opts.sleep_time_mean();
   let mut my_server =
     ConcurrentServer::new(String::from("::1"), 8080, "1234567890".to_string(), opts).await;
   let server_thread = spawn(async move {
@@ -19,18 +18,11 @@ pub async fn run(opts: Opts) {
   });
   let mut join_handles: Vec<JoinHandle<()>> = Vec::new();
   let start = std::time::Instant::now();
-  let total_subtracted = std::time::Duration::from_secs(4);
+  let total_subtracted = std::time::Duration::from_millis((4000 + sleep_mean * repeats).into());
   for i in 0..num_clients as u32 {
     let thread = spawn(async move {
-      //let client_start = std::time::Instant::now();
       let mut my_client =
         testclient::TestClient::new(String::from("localhost:8080"), i, debug).await;
-      //let client_end = std::time::Instant::now();
-      // subtracting construction time
-      //total_subtracted
-        //.checked_add(client_end.duration_since(client_start))
-        //.unwrap();
-
       my_client
         .run_client(
           String::from("Hello World"),
@@ -38,7 +30,6 @@ pub async fn run(opts: Opts) {
           num_clients,
           out_degree,
           sleep_mean,
-          sleep_std,
         )
         .await
         .unwrap();

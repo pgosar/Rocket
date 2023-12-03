@@ -32,9 +32,7 @@ pub struct Opts {
   #[getset(get = "pub")]
   out_degree: usize,
   #[getset(get = "pub")]
-  sleep_time_mean: f32,
-  #[getset(get = "pub")]
-  sleep_time_std: f32,
+  sleep_time_mean: u32,
   #[getset(get = "pub")]
   threads: usize,
 }
@@ -152,7 +150,7 @@ impl Opts {
     let threads_str: &String = matches.get_one("num_threads").unwrap_or(num_cpus);
     let threads: usize = threads_str.parse::<usize>().unwrap();
     let sleep_time_str: &String = matches.get_one("sleep_time").unwrap();
-    let sleep_time_mean: f32 = sleep_time_str.parse::<f32>().unwrap();
+    let sleep_time_mean: u32 = sleep_time_str.parse::<u32>().unwrap();
     let opts = Opts {
       mode: mode.unwrap_or(&"s".to_string()).to_string(),
       debug,
@@ -162,7 +160,6 @@ impl Opts {
       num_clients,
       out_degree,
       sleep_time_mean,
-      sleep_time_std: 0.5,
       threads,
     };
     if debug {
