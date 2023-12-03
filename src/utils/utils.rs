@@ -79,7 +79,7 @@ impl Opts {
           .value_name("MODE")
           .help("sets the server mode")
           .value_parser(["c", "s"])
-          .required(true)
+          .required(false)
           .num_args(1),
       )
       .arg(
@@ -136,7 +136,7 @@ impl Opts {
     let log = matches.contains_id("log");
     let verbosity_str: &String = matches.get_one("verbosity").unwrap();
     let verbosity: usize = verbosity_str.parse::<usize>().unwrap();
-    let mode: &String = matches.get_one("mode").expect("mode is required");
+    let mode: Option<&String> = matches.get_one("mode");
     let repeats_str: &String = matches.get_one("repeats").unwrap();
     let repeats: u32 = repeats_str.parse::<u32>().unwrap();
     let num_clients_str: &String = matches.get_one("num_clients").unwrap();
@@ -152,7 +152,7 @@ impl Opts {
     let sleep_time_str: &String = matches.get_one("sleep_time").unwrap();
     let sleep_time_mean: f32 = sleep_time_str.parse::<f32>().unwrap();
     let opts = Opts {
-      mode: mode.to_string(),
+      mode: mode.unwrap_or(&"s".to_string()).to_string(),
       debug,
       log,
       verbosity,
