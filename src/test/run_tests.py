@@ -3,8 +3,14 @@ import shlex
 import threading
 
 
-def run_command(command, num_disconnects):
+def run_command(command):
     command = shlex.split(command)
+    num_disconnects = 0
+    for i in range(len(command) - 1):
+        if command[i] == "-n":
+            num_disconnects = command[i + 1]
+            break
+    print(f"Expecting {num_disconnects} disconnect messages.")
     process = subprocess.Popen(
         command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
     disconnects = 0
@@ -29,11 +35,10 @@ def run_command(command, num_disconnects):
     print(stderr_output, end='')
 
 
-num_disconnects = 3
 commands = []
 with open("commands.txt", "r") as file:
     commands = [line.strip() for line in file.readlines()]
 
 for command in commands:
     print(f"Running command: {command}")
-    run_command(command, num_disconnects)
+    run_command(command)
