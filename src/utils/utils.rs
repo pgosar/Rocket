@@ -71,6 +71,7 @@ impl Opts {
           .value_name("FILE")
           .help("sets whether to output to log file")
           .required(false)
+          .action(clap::ArgAction::SetTrue)
           .num_args(0),
       )
       .arg(

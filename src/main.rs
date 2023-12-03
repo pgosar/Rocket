@@ -4,7 +4,7 @@ mod run;
 mod server;
 mod utils;
 use crate::utils::utils::Opts;
-use run::run_seq::run;
+use run::run::run;
 
 fn main() {
   set_var("RUST_BACKTRACE", "1");
