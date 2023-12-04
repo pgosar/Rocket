@@ -243,27 +243,29 @@ impl ConcurrentServer {
     all_clients: &ClientMap,
     server_log: &Arc<Mutex<Logger>>,
     message: &String,
+    debug: bool,
   ) -> bool {
     let buf = pack_message_frame(message.clone());
-    //println!("not running??");
-    println!("Sending to {:?}", client_ids);
+    if debug {
+      println!("Sending to {:?}", client_ids);
+    }
     for client in client_ids {
-      //println!("running");
       let client_map = all_clients.read().await;
       let client_object = client_map.get(&client).unwrap().lock().await;
       let mut client_stream = client_object.stream().lock().await;
-      //println!("buf: {:?}", buf);
       match (*client_stream).write(&buf).await {
         Ok(_) => {
           let msg: String = format!("Server Write: {}", message);
           let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
           let mut logger = server_log.lock().await;
           logger.log(m);
-          // return true;
         }
         Err(_) => {
           println!("An error occurred while writing, terminating connection");
-          client_stream.shutdown().await.unwrap();
+          client_stream
+            .shutdown()
+            .await
+            .expect("shutdown call failed");
           return false;
         }
       }
@@ -311,9 +313,11 @@ impl ConcurrentServer {
     let handshake_success: bool = Self::verify_client_handshake(&mut stream).await;
     if handshake_success {
       // Self::send_heartbeat(Arc::new(Mutex::new(stream)), debug).await;
-      let (mut read_half, mut write_half) = stream.into_split();
+      let (mut read_half, write_half) = stream.into_split();
       let (_, first_data) = Self::read_message(server_log, &mut buf, &mut read_half, debug).await;
-      println!("first data: {}", first_data.clone().unwrap());
+      if debug {
+        println!("first data: {}", first_data.clone().unwrap());
+      }
       let id = first_data.unwrap().parse::<u32>().expect("Invalid id");
       let mut client_map = clients.write().await;
 
@@ -348,7 +352,7 @@ impl ConcurrentServer {
             .iter()
             .map(|s| s.parse::<u32>().unwrap())
             .collect();
-          if !Self::write_message(ids, &clients, server_log, &text_message).await {
+          if !Self::write_message(ids, &clients, server_log, &text_message, debug).await {
             break;
           }
         } else {
