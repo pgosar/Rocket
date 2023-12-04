@@ -1,4 +1,4 @@
-use crate::utils::utils::*;
+use crate::utils::*;
 use base64::{engine::general_purpose, Engine};
 use std::collections::HashMap;
 use std::vec::Vec;
@@ -107,7 +107,7 @@ fn unpack_server_frame(buf: &mut Vec<u8>) -> (Option<u8>, Option<String>) {
 }
 
 impl ClientSocket {
-  pub async fn new(uri: String, debug: bool) -> ClientSocket {
+  pub fn new(uri: String, debug: bool) -> ClientSocket {
     let split_uri: std::vec::Vec<&str> = uri.split(':').collect();
     let port_path = String::from(split_uri[1]);
     let port_path_vec: Vec<&str> = port_path.split('/').collect();

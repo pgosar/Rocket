@@ -249,24 +249,33 @@ impl ConcurrentServer {
     if debug {
       println!("Sending to {:?}", client_ids);
     }
+    let client_map = all_clients.read().await;
     for client in client_ids {
-      let client_map = all_clients.read().await;
-      let client_object = client_map.get(&client).unwrap().lock().await;
-      let mut client_stream = client_object.stream().lock().await;
-      match (*client_stream).write(&buf).await {
-        Ok(_) => {
-          let msg: String = format!("Server Write: {}", message);
-          let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
-          let mut logger = server_log.lock().await;
-          logger.log(m);
+      match client_map.get(&client) {
+        Some(client_object_lock) => {
+          let client_object = client_object_lock.lock().await;
+          let mut client_stream = client_object.stream().lock().await;
+          match (*client_stream).write(&buf).await {
+            Ok(_) => {
+              let msg: String = format!("Server Write: {}", message);
+              let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
+              let mut logger = server_log.lock().await;
+              logger.log(m);
+            }
+            Err(_) => {
+              println!("An error occurred while writing, terminating connection");
+              client_stream
+                .shutdown()
+                .await
+                .expect("shutdown call failed");
+              return false;
+            }
+          }
         }
-        Err(_) => {
-          println!("An error occurred while writing, terminating connection");
-          client_stream
-            .shutdown()
-            .await
-            .expect("shutdown call failed");
-          return false;
+        None => {
+          if debug {
+            println!("Passed invalid client ID {}", client);
+          }
         }
       }
     }
@@ -359,6 +368,10 @@ impl ConcurrentServer {
           break;
         }
       }
+
+      let mut client_map = clients.write().await;
+      client_map.remove(&id);
+
     } else {
       if debug {
         println!("Invalid client handshake");
