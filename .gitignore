@@ -1,2 +1,6 @@
 target/
 .vscode
+node_modules/
+test/logs/
+test/*.txt
+test/old_scripts

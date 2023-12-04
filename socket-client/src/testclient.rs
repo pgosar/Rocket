@@ -1,6 +1,5 @@
-use crate::client::clientsocket::ClientSocket;
+use crate::clientsocket::ClientSocket;
 use rand::seq::index::sample;
-use rand_distr::Distribution;
 use std::vec::Vec;
 
 pub struct TestClient {
@@ -10,8 +9,8 @@ pub struct TestClient {
 }
 
 impl TestClient {
-  pub async fn new(uri: String, id: u32, debug: bool) -> TestClient {
-    let socket: ClientSocket = ClientSocket::new(uri, debug).await;
+  pub fn new(uri: String, id: u32, debug: bool) -> TestClient {
+    let socket: ClientSocket = ClientSocket::new(uri, debug);
     TestClient { id, socket, debug }
   }
 
@@ -31,6 +30,7 @@ impl TestClient {
       if self.debug {
         println!("client socket {} sending to {:?}", self.id, recipients);
       }
+      self.socket.write_message(recipients, msg.clone()).await;
       tokio::time::sleep(std::time::Duration::from_millis(sleep_mean as u64)).await;
     }
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;

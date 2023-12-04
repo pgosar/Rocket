@@ -1,5 +1,4 @@
 use std::env::set_var;
-mod client;
 mod run;
 mod server;
 mod utils;

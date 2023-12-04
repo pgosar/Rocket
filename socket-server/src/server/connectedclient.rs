@@ -33,7 +33,7 @@ impl ConnectedClient {
     Arc::try_unwrap(client_arc).unwrap().into_inner()
   }
 
-  pub fn send_message(&self) {}
+  //pub fn send_message(&self) {}
 
   /*pub async fn acknowledge_heartbeat(&mut self) {
     loop {

@@ -1,5 +1,0 @@
-cargo run -- -r 50 -n 5 -o 1 -s 5 -t 1
-cargo run -- -r 50 -n 5 -o 1 -s 5 -t 2
-cargo run -- -r 50 -n 5 -o 1 -s 5 -t 4
-cargo run -- -r 50 -n 5 -o 1 -s 5 -t 8
-cargo run -- -r 50 -n 5 -o 1 -s 5 -t 16
