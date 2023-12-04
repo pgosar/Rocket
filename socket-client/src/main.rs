@@ -2,9 +2,6 @@ pub mod testclient;
 pub mod clientsocket;
 mod utils;
 use utils::Opts;
-use std::vec::Vec;
-use tokio::spawn;
-use tokio::task::JoinHandle;
 use std::env::set_var;
 
 
