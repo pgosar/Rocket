@@ -10,34 +10,16 @@ app.get("/", (req, res) => {
 });
 
 const io = require("socket.io")(server, {
-  /*cors: {
-    origin: [process.env.CORS_ORIGIN_URL],    
-    credentials: true,
-  },*/
 });
 
-/*io.use((socket, next) => {
-  if (socket.handshake.query?.id) {
-    console.log(socket.handshake.query.id)
-
-    socket.data.customId = socket.handshake.query.id
-  }
-  next()
-})*/
 
 io.on("connection", (socket) => {
   if (socket.handshake.query?.id) {
-    console.log(socket.handshake.query.id)
-
     socket.data.customId = socket.handshake.query.id
-    socket.join(socket.handshake.query.id)
-    console.log(`server knows client ${socket.handshake.query.id} is connected`)
-  
+    socket.join(socket.handshake.query.id)  
   }
 
   socket.on("message", (data) => {
-    console.log("message")
-    console.log(data.recipients)
     for (const id of data.recipients) {
       socket.to(String(id)).emit("message", {message: data.message})
     }

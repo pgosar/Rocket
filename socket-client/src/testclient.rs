@@ -21,10 +21,11 @@ impl TestClient {
     num_clients: usize,
     out_degree: usize,
     sleep_mean: u32,
+    sleep_padding: u64
   ) -> std::io::Result<()> {
     let mut rng: rand::rngs::StdRng = rand::SeedableRng::from_entropy();
     self.socket.connect(self.id).await;
-    tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(sleep_padding)).await;
     for _ in 0..repeats {
       let recipients: Vec<usize> = sample(&mut rng, num_clients, out_degree).into_vec();
       if self.debug {
@@ -33,7 +34,7 @@ impl TestClient {
       self.socket.write_message(recipients, msg.clone()).await;
       tokio::time::sleep(std::time::Duration::from_millis(sleep_mean as u64)).await;
     }
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(sleep_padding)).await;
     self.socket.disconnect().await;
     Ok(())
   }

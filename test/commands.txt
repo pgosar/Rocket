@@ -1,16 +1,27 @@
-cargo run -- -r 5 -n 5 -o 2 -s 5 
-cargo run -- -r 5 -n 5 -o 2 -s 50 
-cargo run -- -r 5 -n 5 -o 5 -s 5 
-cargo run -- -r 5 -n 5 -o 5 -s 50 
-cargo run -- -r 5 -n 50 -o 2 -s 5 
-cargo run -- -r 5 -n 50 -o 2 -s 50 
-cargo run -- -r 5 -n 50 -o 5 -s 5 
-cargo run -- -r 5 -n 50 -o 5 -s 50 
-cargo run -- -r 50 -n 5 -o 2 -s 5 
-cargo run -- -r 50 -n 5 -o 2 -s 50 
-cargo run -- -r 50 -n 5 -o 5 -s 5 
-cargo run -- -r 50 -n 5 -o 5 -s 50 
-cargo run -- -r 50 -n 50 -o 2 -s 5 
-cargo run -- -r 50 -n 50 -o 2 -s 50 
-cargo run -- -r 50 -n 50 -o 5 -s 5 
-cargo run -- -r 50 -n 50 -o 5 -s 50 
+node index.js5210210
+node index.js5250210
+node index.js52100210
+node index.js50210210
+node index.js50250210
+node index.js502100210
+node index.js500210210
+node index.js500250210
+node index.js5002100210
+node index.js5210510
+node index.js5250510
+node index.js52100510
+node index.js50210510
+node index.js50250510
+node index.js502100510
+node index.js500210510
+node index.js500250510
+node index.js5002100510
+node index.js52105010
+node index.js52505010
+node index.js521005010
+node index.js502105010
+node index.js502505010
+node index.js5021005010
+node index.js5002105010
+node index.js5002505010
+node index.js50021005010

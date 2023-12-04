@@ -16,7 +16,8 @@ pub async fn run(opts: Opts) {
   let num_clients = *opts.num_clients();
   let sleep_mean: u32 = *opts.sleep_time_mean();
   let output_path: String = opts.output_path().clone();
-  let total_subtracted = std::time::Duration::from_millis((4000 + sleep_mean * repeats).into());
+  let sleep_padding: u32 = 2000;
+  let total_subtracted = std::time::Duration::from_millis((sleep_padding * 2 + sleep_mean * repeats).into());
   let mut my_client =
     testclient::TestClient::new(String::from("localhost:8080"), i, debug);
   let start = std::time::Instant::now();
@@ -27,6 +28,7 @@ pub async fn run(opts: Opts) {
         num_clients,
         out_degree,
         sleep_mean,
+        sleep_padding as u64,
     )
     .await
     .unwrap();
@@ -39,7 +41,8 @@ pub async fn run(opts: Opts) {
     .unwrap();
   let mut file = OpenOptions::new().append(true).create(true).open(output_path).expect("error opening file");
   file.lock_exclusive().unwrap();
-  writeln!(file, "{:?}", total_time.as_nanos()).expect("error writing to file");
+  let nanos = (total_time.as_nanos() as f64) / 1000000.0;
+  writeln!(file, "{},{},{},{},{:?}", num_clients, repeats, out_degree, sleep_mean, nanos).expect("error writing to file");
   file.unlock().unwrap();
 }
 

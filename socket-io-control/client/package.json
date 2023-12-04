@@ -9,6 +9,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "proper-lockfile": "^4.1.2",
     "socket.io-client": "^4.7.2"
   }
 }

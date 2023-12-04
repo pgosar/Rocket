@@ -5,6 +5,7 @@ def generate_commands():
     num_clients =  [10, 50, 100] #[5, 10, 20, 50]
     sleep_time_mean = [2, 5, 50] #[20, 50, 200, 1000]
     outdegrees = [2]
+    message_length=[10]
     #thread_counts = [1, 4] #[1, 2, 4, 8, 16, 32]
 
     commands = []
@@ -15,11 +16,12 @@ def generate_commands():
                 for num_client in num_clients:
                     #for t in thread_counts + [num_clients * 2]:
                     command = (
-                        f"./target/debug/socket-client "
-                        f"-r {repeat} "
-                        f"-n {num_client} "
-                        f"-o {degree} "
-                        f"-s {mean} "
+                        f"node index.js"
+                        f" {repeat}"
+                        f" {degree}"
+                        f" {num_client}"
+                        f" {mean}"
+                        f" {message_length[0]}"
                     )
                     commands.append(command)
 
@@ -28,6 +30,6 @@ def generate_commands():
 
 commands = generate_commands()
 
-with open("commands.txt", "w") as file:
+with open("node_commands.txt", "w") as file:
     for command in commands:
         file.write(command + "\n")
