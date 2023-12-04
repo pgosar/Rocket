@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 base64 = "0.21.5"
 clap = "4.4.10"
+fs2 = "0.4.3"
 getset = "0.1.2"
 rand = "0.8.5"
 sha1 = "0.10.6"

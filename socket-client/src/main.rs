@@ -3,7 +3,9 @@ pub mod clientsocket;
 mod utils;
 use utils::Opts;
 use std::env::set_var;
-
+use fs2::FileExt;
+use std::fs::OpenOptions;
+use std::io::Write;
 
 
 pub async fn run(opts: Opts) {
@@ -13,6 +15,7 @@ pub async fn run(opts: Opts) {
   let out_degree = *opts.out_degree() as usize;
   let num_clients = *opts.num_clients();
   let sleep_mean: u32 = *opts.sleep_time_mean();
+  let output_path: String = opts.output_path().clone();
   let total_subtracted = std::time::Duration::from_millis((4000 + sleep_mean * repeats).into());
   let mut my_client =
     testclient::TestClient::new(String::from("localhost:8080"), i, debug);
@@ -34,7 +37,10 @@ pub async fn run(opts: Opts) {
     .duration_since(start)
     .checked_sub(total_subtracted)
     .unwrap();
-  println!("Total time: {:?}", total_time);
+  let mut file = OpenOptions::new().append(true).create(true).open(output_path).expect("error opening file");
+  file.lock_exclusive().unwrap();
+  writeln!(file, "{:?}", total_time.as_nanos()).expect("error writing to file");
+  file.unlock().unwrap();
 }
 
 pub fn main() {

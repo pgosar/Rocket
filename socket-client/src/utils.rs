@@ -31,6 +31,8 @@ pub struct Opts {
   out_degree: usize,
   #[getset(get = "pub")]
   sleep_time_mean: u32,
+  #[getset(get = "pub")]
+  output_path: String,
 }
 
 impl Opts {
@@ -106,6 +108,16 @@ impl Opts {
           .required(false)
           .default_value("1")
           .num_args(1),
+      )
+      .arg(
+        Arg::new("output_path")
+          .short('f')
+          .long("output_path")
+          .value_name("STRING")
+          .help("Specifies path ")
+          .required(false)
+          .default_value("log.txt")
+          .num_args(1),
       );
     let matches = app.get_matches();
     let my_id_str: &String = matches.get_one("my_id").unwrap();
@@ -121,6 +133,7 @@ impl Opts {
     let out_degree: usize = out_degree_str.parse::<usize>().unwrap();
     let sleep_time_str: &String = matches.get_one("sleep_time").unwrap();
     let sleep_time_mean: u32 = sleep_time_str.parse::<u32>().unwrap();
+    let output_path: &String = matches.get_one("output_path").unwrap();
     let opts = Opts {
       my_id,
       debug,
@@ -129,6 +142,7 @@ impl Opts {
       num_clients,
       out_degree,
       sleep_time_mean,
+      output_path: output_path.clone(),
     };
     if debug {
       println!("{:?}", opts);

@@ -1,7 +1,11 @@
 cd ../socket-server
-cargo build
+cargo build --quiet 
 cd ../socket-client
-cargo build
+cargo build --quiet 
 cd ../test
 
-./run_experiment.py 8 5 5 1 50
+rm commands.txt; touch commands.txt
+
+./generate-client-commands.py
+
+./run_experiment.py 8
