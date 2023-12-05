@@ -1,27 +1,13 @@
-node index.js5210210
-node index.js5250210
-node index.js52100210
-node index.js50210210
-node index.js50250210
-node index.js502100210
-node index.js500210210
-node index.js500250210
-node index.js5002100210
-node index.js5210510
-node index.js5250510
-node index.js52100510
-node index.js50210510
-node index.js50250510
-node index.js502100510
-node index.js500210510
-node index.js500250510
-node index.js5002100510
-node index.js52105010
-node index.js52505010
-node index.js521005010
-node index.js502105010
-node index.js502505010
-node index.js5021005010
-node index.js5002105010
-node index.js5002505010
-node index.js50021005010
+./target/debug/socket-client -r 50 -n 50 -o 1 -s 0 -m 10
+./target/debug/socket-client -r 50 -n 50 -o 2 -s 0 -m 10
+./target/debug/socket-client -r 50 -n 50 -o 3 -s 0 -m 10
+./target/debug/socket-client -r 50 -n 50 -o 4 -s 0 -m 10
+./target/debug/socket-client -r 50 -n 50 -o 5 -s 0 -m 10
+./target/debug/socket-client -r 50 -n 50 -o 8 -s 0 -m 10
+./target/debug/socket-client -r 50 -n 50 -o 10 -s 0 -m 10
+./target/debug/socket-client -r 50 -n 50 -o 12 -s 0 -m 10
+./target/debug/socket-client -r 50 -n 50 -o 14 -s 0 -m 10
+./target/debug/socket-client -r 50 -n 50 -o 16 -s 0 -m 10
+./target/debug/socket-client -r 50 -n 50 -o 18 -s 0 -m 10
+./target/debug/socket-client -r 50 -n 50 -o 20 -s 0 -m 10
+./target/debug/socket-client -r 50 -n 50 -o 25 -s 0 -m 10

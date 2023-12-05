@@ -6,7 +6,8 @@ use std::env::set_var;
 use fs2::FileExt;
 use std::fs::OpenOptions;
 use std::io::Write;
-
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
 
 pub async fn run(opts: Opts) {
   let i = *opts.my_id();
@@ -16,14 +17,17 @@ pub async fn run(opts: Opts) {
   let num_clients = *opts.num_clients();
   let sleep_mean: u32 = *opts.sleep_time_mean();
   let output_path: String = opts.output_path().clone();
+  let message_length: usize = *opts.message_length() as usize;
   let sleep_padding: u32 = 2000;
   let total_subtracted = std::time::Duration::from_millis((sleep_padding * 2 + sleep_mean * repeats).into());
   let mut my_client =
     testclient::TestClient::new(String::from("localhost:8080"), i, debug);
   let start = std::time::Instant::now();
+  let rng = thread_rng();
+  let random_msg: String = rng.sample_iter(&Alphanumeric).take(message_length).map(char::from).collect();
   my_client
     .run_client(
-        String::from("Hello World"),
+        random_msg.to_lowercase(),
         repeats,
         num_clients,
         out_degree,
