@@ -33,6 +33,8 @@ pub struct Opts {
   sleep_time_mean: u32,
   #[getset(get = "pub")]
   output_path: String,
+  #[getset(get = "pub")]
+  message_length: u32,
 }
 
 impl Opts {
@@ -118,7 +120,18 @@ impl Opts {
           .required(false)
           .default_value("log.txt")
           .num_args(1),
+      )
+      .arg(
+        Arg::new("message_length")
+          .short('m')
+          .long("message_length")
+          .value_name("NUM")
+          .help("Length of the client messages")
+          .required(false)
+          .default_value("10")
+          .num_args(1),
       );
+
     let matches = app.get_matches();
     let my_id_str: &String = matches.get_one("my_id").unwrap();
     let my_id = my_id_str.parse::<u32>().unwrap();
@@ -134,6 +147,8 @@ impl Opts {
     let sleep_time_str: &String = matches.get_one("sleep_time").unwrap();
     let sleep_time_mean: u32 = sleep_time_str.parse::<u32>().unwrap();
     let output_path: &String = matches.get_one("output_path").unwrap();
+    let message_length_str: &String = matches.get_one("message_length").unwrap();
+    let message_length: u32 = message_length_str.parse::<u32>().unwrap();
     let opts = Opts {
       my_id,
       debug,
@@ -143,6 +158,7 @@ impl Opts {
       out_degree,
       sleep_time_mean,
       output_path: output_path.clone(),
+      message_length,
     };
     if debug {
       println!("{:?}", opts);
