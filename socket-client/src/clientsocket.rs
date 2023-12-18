@@ -163,10 +163,6 @@ impl ClientSocket {
         return false;
       }
     }
-    /*stream
-    .write(handshake.as_bytes())
-    .await
-    .expect("write failed");*/
     match read_half.read(&mut buf).await {
       Ok(size) => {
         let request = String::from_utf8_lossy(&buf[..size]);
@@ -186,10 +182,8 @@ impl ClientSocket {
           }
           let old = m.get(split_line[0]);
           if old.is_none()
-          /*|| old.take().is_some()*/
           {
             // each correct key should exist once and only once
-            //println!("invalid key {} {} {}", split_line[0], old.is_none(), val);
             return false;
           }
           m.insert(
@@ -327,11 +321,7 @@ impl ClientSocket {
             );
           }
           self.write_message(Vec::new(), id.to_string()).await;
-          //let (tx, rx) = channel(8);
-          //self.sender = Some(tx);
           let debug = self.debug;
-          //let mut stream_clone = Arc::clone(self.write_stream.as_mut().unwrap());
-          //let mut recv_clone = Arc::new(Mutex::new(rx));
           let stream_clone = Arc::clone(&self.write_stream.as_ref().unwrap());
           self.reader_thread = Some(tokio::spawn(async move {
             Self::reader_loop(&mut read_half, &stream_clone, debug).await
@@ -371,8 +361,6 @@ impl ClientSocket {
   }
 
   pub async fn disconnect(&mut self) {
-    // if let Some(tx) = self.sender.take() {
-    //tx.send(()).await.unwrap();
     Self::send_control_frame(self.write_stream.as_mut().unwrap(), 8, self.debug).await;
     if let Some(jh) = self.reader_thread.take() {
       jh.await.unwrap();
@@ -386,7 +374,5 @@ impl ClientSocket {
       .shutdown()
       .await
       .unwrap();
-
-    //println!("disconnecting client");
   }
 }
