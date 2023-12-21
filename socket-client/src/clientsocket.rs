@@ -1,14 +1,14 @@
 use crate::utils::*;
 use base64::{engine::general_purpose, Engine};
 use std::collections::HashMap;
-use std::vec::Vec;
-use tokio::task::JoinHandle;
-
 use std::sync::Arc;
+use std::vec::Vec;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+use tracing::{debug, error, info, warn};
 
 pub struct ClientSocket {
   server_uri: String,
@@ -18,7 +18,6 @@ pub struct ClientSocket {
   reader_thread: Option<JoinHandle<()>>,
   mask_key: Vec<u8>,
   connected: bool,
-  debug: bool,
 }
 
 fn generate_key() -> String {
@@ -107,7 +106,7 @@ fn unpack_server_frame(buf: &mut Vec<u8>) -> (Option<u8>, Option<String>) {
 }
 
 impl ClientSocket {
-  pub fn new(uri: String, debug: bool) -> ClientSocket {
+  pub fn new(uri: String) -> ClientSocket {
     let split_uri: std::vec::Vec<&str> = uri.split(':').collect();
     let port_path = String::from(split_uri[1]);
     let port_path_vec: Vec<&str> = port_path.split('/').collect();
@@ -117,9 +116,10 @@ impl ClientSocket {
     }
     let server_uri = String::from(split_uri[0]);
     let server_port = port_path_vec[0].parse::<u16>().unwrap();
-    if debug {
-      println!("{} {} {}", server_uri, server_port, path);
-    }
+    info!(
+      "Server URI: {} Port: {} Path: {}",
+      server_uri, server_port, path
+    );
     ClientSocket {
       server_uri: server_uri.clone(),
       server_port,
@@ -127,7 +127,6 @@ impl ClientSocket {
       write_stream: None,
       reader_thread: None,
       mask_key: vec![0; 4],
-      debug,
       connected: false,
     }
   }
@@ -157,9 +156,11 @@ impl ClientSocket {
       my_addr.port().to_string(),
     );
     match write_half.write(handshake.as_bytes()).await {
-      Ok(_) => {}
+      Ok(_) => {
+        info!("Sent handshake");
+      }
       Err(e) => {
-        println!("Failed to send handshake: {}", e);
+        error!("Failed to send handshake: {}", e);
         return false;
       }
     }
@@ -181,8 +182,7 @@ impl ClientSocket {
             return false;
           }
           let old = m.get(split_line[0]);
-          if old.is_none()
-          {
+          if old.is_none() {
             // each correct key should exist once and only once
             return false;
           }
@@ -205,31 +205,21 @@ impl ClientSocket {
         }
       }
       Err(e) => {
-        if self.debug {
-          println!("Failed to receive data: {}", e);
-        }
+        error!("Failed to receive data: {}", e);
         return false;
       }
     }
-    if self.debug {
-      println!("Handshake succeeded");
-    }
+    info!("Handshake successful");
     true
   }
 
-  async fn reader_loop(
-    read_stream: &mut OwnedReadHalf,
-    write_stream: &Arc<Mutex<OwnedWriteHalf>>,
-    debug: bool,
-  ) {
+  async fn reader_loop(read_stream: &mut OwnedReadHalf, write_stream: &Arc<Mutex<OwnedWriteHalf>>) {
     let mut buf = vec![0; 1024];
     loop {
       match read_stream.read(&mut buf).await {
         Ok(size) => {
           if size == 0 {
-            if debug {
-              println!("size is 0");
-            }
+            debug!("size is 0");
             break;
           }
           let (opcode, payload) = unpack_server_frame(&mut buf);
@@ -240,24 +230,18 @@ impl ClientSocket {
             Some(opcode_val) => {
               if opcode_val == 0x8 {
                 // send a closing frame too if you have not already sent one
-                if debug {
-                  println!("Client received closing frame");
-                }
+                debug!("client received close frame");
                 break;
               } else if opcode_val == 0x9 {
                 // ping, send pong
                 // send control frame of 0xA
-                Self::send_control_frame(write_stream, 0xA, debug).await;
-                if debug {
-                  println!("Client received ping");
-                }
+                Self::send_control_frame(write_stream, 0xA).await;
+                debug!("client received ping");
               } else if opcode_val == 0x1 {
                 match payload {
                   None => {}
                   Some(msg) => {
-                    if debug {
-                      println!("Client Received: {}", &msg);
-                    }
+                    debug!("client received message: {}", msg);
                   }
                 }
               } else {
@@ -268,9 +252,7 @@ impl ClientSocket {
           }
         }
         Err(e) => {
-          if debug {
-            println!("Failed to receive data: {}", e);
-          }
+          error!("Failed to receive data: {}", e);
           break;
         }
       }
@@ -291,77 +273,57 @@ impl ClientSocket {
     let mut stream = self.write_stream.as_mut().unwrap().lock().await;
     match stream.write(&byte_msg).await {
       Ok(_) => {
-        if self.debug {
-          println!("Client Sent: {}", msg);
-        }
+        debug!("Client sent message: {}", msg);
       }
-      Err(err) => {
-        if self.debug {
-          println!("Error writing from client: {}", err);
-        }
+      Err(e) => {
+        error!("Error writing from client: {}", e);
       }
     }
   }
 
   pub async fn connect(&mut self, id: u32) {
     let address: String = format!("{}:{}", self.server_uri, self.server_port);
-    if self.debug {
-      println!("Connecting to {}", address);
-    }
+    info!("Connecting to {}", address);
     match TcpStream::connect(address).await {
       Ok(stream) => {
         let (mut read_half, mut write_half) = stream.into_split();
         self.connected = self.handshake_http(&mut read_half, &mut write_half).await;
         if self.connected {
           self.write_stream = Some(Arc::new(Mutex::new(write_half)));
-          if self.debug {
-            println!(
-              "Successfully connected to server in port {}",
-              self.server_port
-            );
-          }
+          info!("Connected to server in port {}", self.server_port);
           self.write_message(Vec::new(), id.to_string()).await;
-          let debug = self.debug;
           let stream_clone = Arc::clone(&self.write_stream.as_ref().unwrap());
           self.reader_thread = Some(tokio::spawn(async move {
-            Self::reader_loop(&mut read_half, &stream_clone, debug).await
+            Self::reader_loop(&mut read_half, &stream_clone).await
           }));
           for i in 0..4 {
             self.mask_key[i] = rand::random::<u8>()
           }
         } else {
-          if self.debug {
-            println!("invalid server handshake");
-          }
+          warn!("Invalid server handshake");
         }
       }
       Err(e) => {
-        if self.debug {
-          println!("Failed to connect stream: {}", e);
-        }
+        error!("Failed to connect stream: {}", e);
       }
     }
   }
 
-  async fn send_control_frame(write_stream: &Arc<Mutex<OwnedWriteHalf>>, opcode: u8, debug: bool) {
+  async fn send_control_frame(write_stream: &Arc<Mutex<OwnedWriteHalf>>, opcode: u8) {
     let byte_msg: Vec<u8> = vec![0b10000000 + opcode];
     let mut stream = write_stream.lock().await;
     match stream.write(&byte_msg).await {
       Ok(_) => {
-        if debug {
-          println!("Client Sent opcode {} ", opcode);
-        }
+        debug!("Client sent opcode {}", opcode);
       }
       Err(_) => {
-        if debug {
-          println!("Failed to send client control frame of code {}", opcode);
-        }
+        error!("Failed to send client contorl frame of code {}", opcode);
       }
     }
   }
 
   pub async fn disconnect(&mut self) {
-    Self::send_control_frame(self.write_stream.as_mut().unwrap(), 8, self.debug).await;
+    Self::send_control_frame(self.write_stream.as_mut().unwrap(), 8).await;
     if let Some(jh) = self.reader_thread.take() {
       jh.await.unwrap();
     }
@@ -373,6 +335,7 @@ impl ClientSocket {
       .await
       .shutdown()
       .await
-      .unwrap();
+      .expect("Shutdown failed");
+    info!("Client disconnected");
   }
 }

@@ -1,5 +1,5 @@
 pub mod concurrent;
-pub mod server;
 pub mod connectedclient;
+pub mod server;
 
 pub use server::*;
