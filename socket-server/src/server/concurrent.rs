@@ -1,6 +1,7 @@
 use crate::server::connectedclient::ConnectedClient;
 use crate::utils::logging::*;
 use crate::utils::utils::sec_websocket_key;
+use async_channel::{bounded, Receiver, Sender};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -108,29 +109,31 @@ pub struct ConcurrentServer {
   listener: TcpListener,
   server_log: Arc<Mutex<Logger>>,
   clients: ClientMap,
+  messages: (Arc<Mutex<Sender<String>>>, Arc<Mutex<Receiver<String>>>),
 }
 
 impl ConcurrentServer {
-  pub async fn new(ip: String, port: u16, key: String) -> ConcurrentServer {
+  pub async fn new(ip: String, port: u16, key: String, capacity: usize) -> ConcurrentServer {
     info!("Starting server on {}:{}", ip, port);
+    let (sender, receiver) = bounded(capacity);
     ConcurrentServer {
       key,
       listener: create_listener(ip, port).await,
       server_log: Arc::new(Mutex::new(Logger::new())),
       clients: ClientMap::new(RwLock::new(HashMap::new())),
+      messages: (Arc::new(Mutex::new(sender)), Arc::new(Mutex::new(receiver))),
     }
   }
 
   pub async fn run_server(&mut self) -> std::io::Result<()> {
-    let server_log = &mut self.server_log;
     loop {
-      let log_copy = Arc::clone(server_log);
       let clients_copy = Arc::clone(&self.clients);
-
+      let sender_copy = Arc::clone(&self.messages.0);
+      let receiver_copy = Arc::clone(&self.messages.1);
       let (stream, addr) = self.listener.accept().await?;
       info!("New client: {}", addr);
       tokio::spawn(async move {
-        Self::handle_client(&log_copy, stream, clients_copy).await;
+        Self::handle_client(stream, clients_copy, sender_copy, receiver_copy).await;
       });
     }
   }
@@ -181,7 +184,7 @@ impl ConcurrentServer {
   }
 
   pub async fn read_message(
-    server_log: &Arc<Mutex<Logger>>,
+    sender: &mut Sender<String>,
     buf: &mut Vec<u8>,
     stream: &mut OwnedReadHalf,
   ) -> (Option<u8>, Option<String>) {
@@ -204,10 +207,7 @@ impl ConcurrentServer {
                   return (opcode, payload);
                 }
                 Some(msg) => {
-                  let log_msg: String = format!("Server Read: {}", &msg);
-                  let m: Message = Message::new(log_msg.clone(), ErrorLevel::INFO);
-                  let mut logger = server_log.lock().await;
-                  logger.log(m);
+                  sender.send(msg.clone()).await.unwrap();
                   return (opcode, Some(msg));
                 }
               }
@@ -225,9 +225,9 @@ impl ConcurrentServer {
   }
 
   pub async fn write_message(
+    receiver: Receiver<String>,
     client_ids: Vec<u32>,
     all_clients: &ClientMap,
-    server_log: &Arc<Mutex<Logger>>,
     message: &String,
   ) -> bool {
     let buf = pack_message_frame(message.clone());
@@ -240,10 +240,7 @@ impl ConcurrentServer {
           let mut client_stream = client_object.stream().lock().await;
           match (*client_stream).write(&buf).await {
             Ok(_) => {
-              let msg: String = format!("Server Write: {}", message);
-              let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
-              // let mut logger = server_log.lock().await;
-              // logger.log(m);
+              debug!("received {}", receiver.recv().await.unwrap());
             }
             Err(_) => {
               error!("Error writing to client {}, disconnecting", client);
@@ -287,15 +284,18 @@ impl ConcurrentServer {
   }
 
   pub async fn handle_client(
-    server_log: &Arc<Mutex<Logger>>,
     mut stream: TcpStream,
     clients: ClientMap,
+    sender: Arc<Mutex<Sender<String>>>,
+    receiver: Arc<Mutex<Receiver<String>>>,
   ) {
     let mut buf: Vec<u8> = vec![0; 1024];
     let handshake_success: bool = Self::verify_client_handshake(&mut stream).await;
     if handshake_success {
       let (mut read_half, write_half) = stream.into_split();
-      let (_, first_data) = Self::read_message(server_log, &mut buf, &mut read_half).await;
+      // TODO: any way to avoid a clone?
+      let mut s = sender.lock().await.clone();
+      let (_, first_data) = Self::read_message(&mut s, &mut buf, &mut read_half).await;
       debug!("First data: {:?}", first_data);
       let id = first_data.unwrap().parse::<u32>().expect("Invalid id");
       let mut client_map = clients.write().await;
@@ -308,7 +308,8 @@ impl ConcurrentServer {
       std::mem::drop(client_map);
 
       loop {
-        let (opcode, data) = Self::read_message(server_log, &mut buf, &mut read_half).await;
+        let mut s = sender.lock().await.clone();
+        let (opcode, data) = Self::read_message(&mut s, &mut buf, &mut read_half).await;
         if opcode.is_none() {
           break;
         }
@@ -329,7 +330,8 @@ impl ConcurrentServer {
             .iter()
             .map(|s| s.parse::<u32>().unwrap())
             .collect();
-          if !Self::write_message(ids, &clients, server_log, &text_message).await {
+          let r = receiver.lock().await.clone();
+          if !Self::write_message(r, ids, &clients, &text_message).await {
             break;
           }
         } else {
@@ -343,7 +345,5 @@ impl ConcurrentServer {
       warn!("Invalid client handshake");
     }
     info!("Client all done");
-    let logger = server_log.lock().await;
-    logger.print_log().unwrap();
   }
 }
