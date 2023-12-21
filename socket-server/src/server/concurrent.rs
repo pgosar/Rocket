@@ -1,6 +1,7 @@
 use crate::server::connectedclient::ConnectedClient;
 use crate::utils::logging::*;
-use crate::utils::utils::{sec_websocket_key, Opts};
+use crate::utils::utils::sec_websocket_key;
+use async_channel::{bounded, Receiver, Sender};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -9,6 +10,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock};
+use tracing::{debug, error, info, warn};
 
 type ClientMap = Arc<RwLock<HashMap<u32, Mutex<ConnectedClient>>>>;
 
@@ -103,45 +105,35 @@ fn unpack_client_frame(buf: &mut Vec<u8>) -> (Option<u8>, Option<String>) {
 
 #[derive(Debug)]
 pub struct ConcurrentServer {
-  ip: String,
-  port: u16,
   key: String,
   listener: TcpListener,
   server_log: Arc<Mutex<Logger>>,
-  opts: Opts,
   clients: ClientMap,
+  messages: (Arc<Mutex<Sender<String>>>, Arc<Mutex<Receiver<String>>>),
 }
 
 impl ConcurrentServer {
-  pub async fn new(ip: String, port: u16, key: String, opts: Opts) -> ConcurrentServer {
+  pub async fn new(ip: String, port: u16, key: String, capacity: usize) -> ConcurrentServer {
+    info!("Starting server on {}:{}", ip, port);
+    let (sender, receiver) = bounded(capacity);
     ConcurrentServer {
-      ip: ip.clone(),
-      port,
       key,
       listener: create_listener(ip, port).await,
-      server_log: Arc::new(Mutex::new(Logger::new(*opts.log()))),
-      opts,
+      server_log: Arc::new(Mutex::new(Logger::new())),
       clients: ClientMap::new(RwLock::new(HashMap::new())),
+      messages: (Arc::new(Mutex::new(sender)), Arc::new(Mutex::new(receiver))),
     }
   }
 
   pub async fn run_server(&mut self) -> std::io::Result<()> {
-    if *self.opts.debug() {
-      println!("Server running on {}:{}", self.ip, self.port);
-    }
-    let server_log = &mut self.server_log;
     loop {
-      let log_copy = Arc::clone(server_log);
       let clients_copy = Arc::clone(&self.clients);
-
+      let sender_copy = Arc::clone(&self.messages.0);
+      let receiver_copy = Arc::clone(&self.messages.1);
       let (stream, addr) = self.listener.accept().await?;
-      if *self.opts.debug() {
-        println!("New client: {}", addr);
-      }
-      let debug = (self.opts.debug()).clone();
+      info!("New client: {}", addr);
       tokio::spawn(async move {
-        Self::handle_client(&log_copy, stream, clients_copy, debug).await;
-        // Self::send_heartbeat(Arc::new(Mutex::new(stream)), debug).await;
+        Self::handle_client(stream, clients_copy, sender_copy, receiver_copy).await;
       });
     }
   }
@@ -167,13 +159,13 @@ impl ConcurrentServer {
         m.insert(String::from(split_line[0]), String::from(split_line[1]));
       }
     }
-    let host = m.get("Host").unwrap().to_owned();
+    // let host = m.get("Host").unwrap().to_owned();
     let upgrade = m.get("Upgrade").unwrap().to_owned();
     let connection = m.get("Connection").unwrap().to_owned();
     let key = String::from(m.get("Sec-WebSocket-Key").unwrap().to_owned().trim());
     //println!("{}", key);
     let version = m.get("Sec-WebSocket-Version").unwrap().to_owned();
-    let origin = m.get("Origin").unwrap().to_owned();
+    // let origin = m.get("Origin").unwrap().to_owned();
 
     if upgrade.trim() != "websocket" || connection.trim() != "Upgrade" || version.trim() != "13" {
       return false;
@@ -192,17 +184,14 @@ impl ConcurrentServer {
   }
 
   pub async fn read_message(
-    server_log: &Arc<Mutex<Logger>>,
+    sender: &mut Sender<String>,
     buf: &mut Vec<u8>,
     stream: &mut OwnedReadHalf,
-    debug: bool,
   ) -> (Option<u8>, Option<String>) {
     match stream.read(buf).await {
       Ok(size) => {
         if size == 0 {
-          if debug {
-            println!("server: size is 0");
-          }
+          debug!("size is 0");
           return (None, None);
         }
 
@@ -218,10 +207,7 @@ impl ConcurrentServer {
                   return (opcode, payload);
                 }
                 Some(msg) => {
-                  let log_msg: String = format!("Server Read: {}", &msg);
-                  let m: Message = Message::new(log_msg.clone(), ErrorLevel::INFO);
-                  let mut logger = server_log.lock().await;
-                  logger.log(m);
+                  sender.send(msg.clone()).await.unwrap();
                   return (opcode, Some(msg));
                 }
               }
@@ -239,16 +225,13 @@ impl ConcurrentServer {
   }
 
   pub async fn write_message(
+    receiver: Receiver<String>,
     client_ids: Vec<u32>,
     all_clients: &ClientMap,
-    server_log: &Arc<Mutex<Logger>>,
     message: &String,
-    debug: bool,
   ) -> bool {
     let buf = pack_message_frame(message.clone());
-    if debug {
-      println!("Sending to {:?}", client_ids);
-    }
+    debug!("Sending to clients: {:?}", client_ids);
     let client_map = all_clients.read().await;
     for client in client_ids {
       match client_map.get(&client) {
@@ -257,13 +240,10 @@ impl ConcurrentServer {
           let mut client_stream = client_object.stream().lock().await;
           match (*client_stream).write(&buf).await {
             Ok(_) => {
-              let msg: String = format!("Server Write: {}", message);
-              let m: Message = Message::new(msg.clone(), ErrorLevel::INFO);
-              let mut logger = server_log.lock().await;
-              logger.log(m);
+              debug!("received {}", receiver.recv().await.unwrap());
             }
             Err(_) => {
-              println!("An error occurred while writing, terminating connection");
+              error!("Error writing to client {}, disconnecting", client);
               client_stream
                 .shutdown()
                 .await
@@ -273,60 +253,50 @@ impl ConcurrentServer {
           }
         }
         None => {
-          if debug {
-            println!("Passed invalid client ID {}", client);
-          }
+          error!("Passed invalid client id {}", client);
         }
       }
     }
     true
   }
 
-  /*async fn send_heartbeat(stream: &mut TcpStream, debug: bool) {
+  /*async fn send_heartbeat(stream: &mut TcpStream) {
     // let mut unwrap_stream = Arc::try_unwrap(stream).unwrap().into_inner().unwrap();
     loop {
-      Self::send_control_frame(stream, 0x9, debug).await;
+      Self::send_control_frame(stream, 0x9).await;
       tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-      if debug {
-        println!("server sent heartbeat");
-      }
     }
   }*/
 
-  async fn send_control_frame(stream: &mut OwnedWriteHalf, opcode: u8, debug: bool) {
+  async fn send_control_frame(stream: &mut OwnedWriteHalf, opcode: u8) {
     let byte_msg: Vec<u8> = vec![0b10000000 + opcode];
     if opcode == 0x9 {
-      // Self::send_heartbeat(stream, debug);
+      // Self::send_heartbeat(stream);
     }
     match stream.write(&byte_msg).await {
       Ok(_) => {
-        if debug {
-          println!("Server sent opcode {} ", opcode);
-        }
+        debug!("Server sent opcode {}", opcode);
       }
       Err(_) => {
-        if debug {
-          println!("Failed to send server control frame of code {}", opcode);
-        }
+        error!("Failed to send server control frame, opcode {}", opcode);
       }
     }
   }
 
   pub async fn handle_client(
-    server_log: &Arc<Mutex<Logger>>,
     mut stream: TcpStream,
     clients: ClientMap,
-    debug: bool,
+    sender: Arc<Mutex<Sender<String>>>,
+    receiver: Arc<Mutex<Receiver<String>>>,
   ) {
     let mut buf: Vec<u8> = vec![0; 1024];
     let handshake_success: bool = Self::verify_client_handshake(&mut stream).await;
     if handshake_success {
-      // Self::send_heartbeat(Arc::new(Mutex::new(stream)), debug).await;
       let (mut read_half, write_half) = stream.into_split();
-      let (_, first_data) = Self::read_message(server_log, &mut buf, &mut read_half, debug).await;
-      if debug {
-        println!("first data: {}", first_data.clone().unwrap());
-      }
+      // TODO: any way to avoid a clone?
+      let mut s = sender.lock().await.clone();
+      let (_, first_data) = Self::read_message(&mut s, &mut buf, &mut read_half).await;
+      debug!("First data: {:?}", first_data);
       let id = first_data.unwrap().parse::<u32>().expect("Invalid id");
       let mut client_map = clients.write().await;
 
@@ -338,21 +308,20 @@ impl ConcurrentServer {
       std::mem::drop(client_map);
 
       loop {
-        let (opcode, data) = Self::read_message(server_log, &mut buf, &mut read_half, debug).await;
+        let mut s = sender.lock().await.clone();
+        let (opcode, data) = Self::read_message(&mut s, &mut buf, &mut read_half).await;
         if opcode.is_none() {
           break;
         }
         let opcode_val = opcode.unwrap();
         if opcode_val == 0x8 {
-          if debug {
-            println!("Server received opcode 8");
-          }
+          info!("Server received opcode 8");
           let mut wh = write_half_arc.lock().await;
-          Self::send_control_frame(&mut wh, opcode_val, debug).await;
+          Self::send_control_frame(&mut wh, opcode_val).await;
           break;
         } else if opcode_val == 0x9 {
           let mut wh = write_half_arc.lock().await;
-          Self::send_control_frame(&mut wh, 0xA, debug).await;
+          Self::send_control_frame(&mut wh, 0xA).await;
         } else if opcode_val == 0x1 {
           let unwrapped_data = data.unwrap();
           let split_data: Vec<&str> = unwrapped_data.split(',').collect();
@@ -361,7 +330,8 @@ impl ConcurrentServer {
             .iter()
             .map(|s| s.parse::<u32>().unwrap())
             .collect();
-          if !Self::write_message(ids, &clients, server_log, &text_message, debug).await {
+          let r = receiver.lock().await.clone();
+          if !Self::write_message(r, ids, &clients, &text_message).await {
             break;
           }
         } else {
@@ -371,16 +341,9 @@ impl ConcurrentServer {
 
       let mut client_map = clients.write().await;
       client_map.remove(&id);
-
     } else {
-      if debug {
-        println!("Invalid client handshake");
-      }
+      warn!("Invalid client handshake");
     }
-    if debug {
-      println!("client all done");
-    }
-    let logger = server_log.lock().await;
-    logger.print_log().unwrap();
+    info!("Client all done");
   }
 }
