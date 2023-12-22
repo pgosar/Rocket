@@ -20,10 +20,6 @@ pub struct Opts {
   #[getset(get = "pub")]
   my_id: u32,
   #[getset(get = "pub")]
-  debug: bool,
-  #[getset(get = "pub")]
-  verbosity: usize,
-  #[getset(get = "pub")]
   repeats: u32,
   #[getset(get = "pub")]
   num_clients: usize,
@@ -47,25 +43,6 @@ impl Opts {
           .long("my_id")
           .help("specify what to tell the server your ID is")
           .required(false)
-          .default_value("0")
-          .num_args(1),
-      )
-      .arg(
-        Arg::new("debug")
-          .short('d')
-          .long("debug")
-          .help("enables debugging mode")
-          .required(false)
-          .action(clap::ArgAction::SetTrue)
-          .num_args(0),
-      )
-      .arg(
-        Arg::new("verbosity")
-          .short('v')
-          .long("verbose")
-          .help("sets the level of verbosity for debugging output")
-          .required(false)
-          .value_parser(["0", "1", "2", "3"])
           .default_value("0")
           .num_args(1),
       )
@@ -123,9 +100,6 @@ impl Opts {
     let matches = app.get_matches();
     let my_id_str: &String = matches.get_one("my_id").unwrap();
     let my_id = my_id_str.parse::<u32>().unwrap();
-    let debug = matches.get_flag("debug");
-    let verbosity_str: &String = matches.get_one("verbosity").unwrap();
-    let verbosity: usize = verbosity_str.parse::<usize>().unwrap();
     let repeats_str: &String = matches.get_one("repeats").unwrap();
     let repeats: u32 = repeats_str.parse::<u32>().unwrap();
     let num_clients_str: &String = matches.get_one("num_clients").unwrap();
@@ -138,17 +112,12 @@ impl Opts {
     let message_length: u32 = message_length_str.parse::<u32>().unwrap();
     let opts = Opts {
       my_id,
-      debug,
-      verbosity,
       repeats,
       num_clients,
       out_degree,
       sleep_time_mean,
       message_length,
     };
-    if debug {
-      println!("{:?}", opts);
-    }
     opts
   }
 }
