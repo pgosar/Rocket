@@ -11,6 +11,7 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 type ClientMap = Arc<RwLock<HashMap<u32, Mutex<ConnectedClient>>>>;
 
@@ -106,10 +107,11 @@ fn unpack_client_frame(buf: &mut Vec<u8>) -> (Option<u8>, Option<String>) {
 #[derive(Debug)]
 pub struct ConcurrentServer {
   key: String,
+  num_clients: Arc<AtomicU32>,
   listener: TcpListener,
   server_log: Arc<Mutex<Logger>>,
   clients: ClientMap,
-  messages: (Arc<Mutex<Sender<String>>>, Arc<Mutex<Receiver<String>>>),
+  messages: (Sender<String>, Receiver<String>),
 }
 
 impl ConcurrentServer {
@@ -118,23 +120,51 @@ impl ConcurrentServer {
     let (sender, receiver) = bounded(capacity);
     ConcurrentServer {
       key,
+      num_clients: Arc::new(AtomicU32::new(0)),
       listener: create_listener(ip, port).await,
       server_log: Arc::new(Mutex::new(Logger::new())),
       clients: ClientMap::new(RwLock::new(HashMap::new())),
-      messages: (Arc::new(Mutex::new(sender)), Arc::new(Mutex::new(receiver))),
+      messages: (sender, receiver),
     }
   }
 
   pub async fn run_server(&mut self) -> std::io::Result<()> {
     loop {
       let clients_copy = Arc::clone(&self.clients);
-      let sender_copy = Arc::clone(&self.messages.0);
-      let receiver_copy = Arc::clone(&self.messages.1);
-      let (stream, addr) = self.listener.accept().await?;
+      let mut sender_copy = self.messages.0.clone();
+      let (mut stream, addr) = self.listener.accept().await?;
       info!("New client: {}", addr);
+      let counter_clone = Arc::clone(&self.num_clients);
+      let counter_val = counter_clone.load(Ordering::SeqCst);
+      if counter_val % 5 == 0 {
+        let receiver_copy = self.messages.1.clone();
+        let clients_copy = Arc::clone(&self.clients);
+        tokio::spawn(async move {
+          Self::writer_thread(receiver_copy, clients_copy).await;
+        });
+      }
       tokio::spawn(async move {
-        Self::handle_client(stream, clients_copy, sender_copy, receiver_copy).await;
+        //Self::handle_client(stream, clients_copy, sender_copy, receiver_copy).await;
+        let handshake_success: bool = Self::verify_client_handshake(&mut stream).await;
+        if handshake_success {
+          let (mut read_half, write_half) = stream.into_split();
+          let first_data = Self::extract_message(&mut read_half).await;
+
+          debug!("First data: {:?}", first_data);
+          let id = first_data.unwrap().parse::<u32>().expect("Invalid id");
+          let mut client_map = clients_copy.write().await;
+
+          let write_half_arc = Arc::new(Mutex::new(write_half));
+          client_map.insert(
+            id,
+            Mutex::new(ConnectedClient::new(id, Arc::clone(&write_half_arc))),
+          );
+          std::mem::drop(client_map);
+          counter_clone.fetch_add(1, Ordering::SeqCst);
+          Self::client_reader_thread(&mut read_half, &mut sender_copy).await;
+        }
       });
+
     }
   }
 
@@ -184,7 +214,6 @@ impl ConcurrentServer {
   }
 
   pub async fn read_message(
-    sender: &mut Sender<String>,
     buf: &mut Vec<u8>,
     stream: &mut OwnedReadHalf,
   ) -> (Option<u8>, Option<String>) {
@@ -207,7 +236,6 @@ impl ConcurrentServer {
                   return (opcode, payload);
                 }
                 Some(msg) => {
-                  sender.send(msg.clone()).await.unwrap();
                   return (opcode, Some(msg));
                 }
               }
@@ -225,7 +253,6 @@ impl ConcurrentServer {
   }
 
   pub async fn write_message(
-    receiver: Receiver<String>,
     client_ids: Vec<u32>,
     all_clients: &ClientMap,
     message: &String,
@@ -240,7 +267,6 @@ impl ConcurrentServer {
           let mut client_stream = client_object.stream().lock().await;
           match (*client_stream).write(&buf).await {
             Ok(_) => {
-              debug!("received {}", receiver.recv().await.unwrap());
             }
             Err(_) => {
               error!("Error writing to client {}, disconnecting", client);
@@ -286,16 +312,15 @@ impl ConcurrentServer {
   pub async fn handle_client(
     mut stream: TcpStream,
     clients: ClientMap,
-    sender: Arc<Mutex<Sender<String>>>,
-    receiver: Arc<Mutex<Receiver<String>>>,
+    sender: Sender<String>,
+    receiver: Receiver<String>,
   ) {
     let mut buf: Vec<u8> = vec![0; 1024];
     let handshake_success: bool = Self::verify_client_handshake(&mut stream).await;
     if handshake_success {
       let (mut read_half, write_half) = stream.into_split();
       // TODO: any way to avoid a clone?
-      let mut s = sender.lock().await.clone();
-      let (_, first_data) = Self::read_message(&mut s, &mut buf, &mut read_half).await;
+      let (_, first_data) = Self::read_message(&mut buf, &mut read_half).await;
       debug!("First data: {:?}", first_data);
       let id = first_data.unwrap().parse::<u32>().expect("Invalid id");
       let mut client_map = clients.write().await;
@@ -308,8 +333,7 @@ impl ConcurrentServer {
       std::mem::drop(client_map);
 
       loop {
-        let mut s = sender.lock().await.clone();
-        let (opcode, data) = Self::read_message(&mut s, &mut buf, &mut read_half).await;
+        let (opcode, data) = Self::read_message(&mut buf, &mut read_half).await;
         if opcode.is_none() {
           break;
         }
@@ -330,8 +354,7 @@ impl ConcurrentServer {
             .iter()
             .map(|s| s.parse::<u32>().unwrap())
             .collect();
-          let r = receiver.lock().await.clone();
-          if !Self::write_message(r, ids, &clients, &text_message).await {
+          if !Self::write_message(ids, &clients, &text_message).await {
             break;
           }
         } else {
@@ -346,4 +369,143 @@ impl ConcurrentServer {
     }
     info!("Client all done");
   }
+
+  pub async fn read_message_new( 
+    sender: &mut Sender<String>,
+    buf: &mut Vec<u8>,
+    stream: &mut OwnedReadHalf
+  ) -> Option<u8> {
+    match stream.read(buf).await {
+      Ok(size) => {
+        if size == 0 {
+          debug!("size is 0");
+          return None;
+        }
+        let (opcode, payload) = unpack_client_frame(buf);
+        match opcode {
+          None => {
+            return None;
+          }
+          Some(opcode_val) => {
+            if opcode_val == 0x1 {
+              match payload {
+                None => {}
+                Some(msg) => {
+                  sender.send(msg).await.unwrap();
+                }
+              }
+            }
+            return opcode;
+          }
+        }
+      }
+      Err(err) => {
+        error!("{}", err);
+        return None;
+      }
+    }
+  }
+
+  async fn extract_message(
+    stream: &mut OwnedReadHalf
+  ) -> Option<String> {
+    let mut buf: Vec<u8> = vec![0; 1024];
+    match stream.read(&mut buf).await {
+      Ok(_) => {
+        let (opcode, payload) = unpack_client_frame(&mut buf);
+        match opcode {
+          None => {
+            return None;
+          }
+          Some(opcode_val) => {
+            if opcode_val == 0x1 {
+              match payload {
+                None => {
+                  return None;
+                }
+                Some(msg) => {
+                  return Some(msg);
+                }
+              }
+            } else {
+              return None;
+            }
+          }
+        }
+      }
+      Err(err) => {
+        println!("{}", err);
+        return None;
+      }
+    }
+
+  }
+
+  async fn client_reader_thread(read_half: &mut OwnedReadHalf, sender: &mut Sender<String>) { 
+    let mut buf: Vec<u8> = vec![0; 1024];
+    loop {
+      match Self::read_message_new(sender, &mut buf, read_half).await {
+        Some(opcode) => {
+          if opcode == 0x8 {
+            // send closing frame
+            break;
+          } else if opcode == 0x9 {
+            // send pong
+          }
+        }
+        None => {
+          break;
+        }
+      }
+    }
+  }
+
+  async fn write_message_new(
+    client_ids: Vec<u32>,
+    all_clients: &ClientMap,
+    message: &String,
+  ) {
+    let buf = pack_message_frame(message.clone());
+    debug!("Sending to clients: {:?}", client_ids);
+    let client_map = all_clients.read().await;
+    for client in client_ids {
+      match client_map.get(&client) {
+        Some(client_object_lock) => {
+          let client_object = client_object_lock.lock().await;
+          let mut client_stream = client_object.stream().lock().await;
+          match (*client_stream).write(&buf).await {
+            Ok(_) => {
+            }
+            Err(_) => {
+              error!("Error writing to client {}, disconnecting", client);
+              client_stream
+                .shutdown()
+                .await
+                .expect("shutdown call failed");
+            }
+          }
+        }
+        None => {
+          error!("Passed invalid client id {}", client);
+        }
+      }
+    }
+  }
+
+  async fn writer_thread(receiver: Receiver<String>, clients: ClientMap) {
+    loop {
+      let instruction = receiver.recv().await;
+      let unwrapped_data = instruction.unwrap();
+      let split_data: Vec<&str> = unwrapped_data.split(',').collect();
+      // replace with JSON parsing
+      let text_message = String::from(split_data[split_data.len() - 1]);
+      let ids: Vec<u32> = split_data[0..split_data.len() - 1]
+        .iter()
+        .map(|s| s.parse::<u32>().unwrap())
+        .collect();
+      // replace with a call to a function retrieved from an event handler struct
+      Self::write_message_new(ids, &clients, &text_message).await;
+    }
+  }
+
 }
